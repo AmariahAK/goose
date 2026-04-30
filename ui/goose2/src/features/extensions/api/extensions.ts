@@ -1,9 +1,5 @@
 import { getClient } from "@/shared/api/acpConnection";
-import type {
-  ExtensionConfig,
-  ExtensionEntry,
-  SessionExtensionStatus,
-} from "../types";
+import type { ExtensionConfig, ExtensionEntry } from "../types";
 
 export async function listExtensions(): Promise<ExtensionEntry[]> {
   const client = await getClient();
@@ -11,14 +7,14 @@ export async function listExtensions(): Promise<ExtensionEntry[]> {
   return response.extensions as ExtensionEntry[];
 }
 
-export async function listSessionExtensionStatus(
+export async function listSessionExtensions(
   sessionId: string,
-): Promise<SessionExtensionStatus[]> {
+): Promise<ExtensionConfig[]> {
   const client = await getClient();
-  const response = await client.goose.GooseSessionExtensionsStatus({
+  const response = await client.goose.GooseSessionExtensions({
     sessionId,
   });
-  return (response.extensions ?? []) as SessionExtensionStatus[];
+  return (response.extensions ?? []) as ExtensionConfig[];
 }
 
 export async function addExtension(

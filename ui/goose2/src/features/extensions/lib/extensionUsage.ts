@@ -7,6 +7,26 @@ export interface ExtensionUsage {
   lastUsedAt: number;
 }
 
+function formatFallbackDisplayName(configKey: string): string {
+  const words = configKey.split(/[_-]+/).filter(Boolean);
+  if (words.length === 0) return configKey;
+  return words
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
+}
+
+function unavailableExtension(configKey: string): SessionExtensionStatus {
+  return {
+    type: "platform",
+    name: configKey,
+    description: "",
+    display_name: formatFallbackDisplayName(configKey),
+    config_key: configKey,
+    status: "unavailable",
+    tools: [],
+  };
+}
+
 function toolOwnerFromName(name: string): string | null {
   const [owner] = name.split("__");
   return owner && owner !== name ? normalizeExtensionKey(owner) : null;
@@ -27,6 +47,15 @@ export function buildToolToExtensionMap(
 ): Map<string, string> {
   const byTool = new Map<string, string>();
   for (const extension of extensions) {
+    const configKey = normalizeExtensionKey(extension.config_key);
+    const nameKey = normalizeExtensionKey(extension.name);
+    if (!byTool.has(configKey)) {
+      byTool.set(configKey, extension.config_key);
+    }
+    if (!byTool.has(nameKey)) {
+      byTool.set(nameKey, extension.config_key);
+    }
+
     for (const tool of extension.tools) {
       byTool.set(normalizeExtensionKey(tool), extension.config_key);
       const unprefixedName = tool.split("__").pop();
@@ -83,9 +112,15 @@ export function getUsedSessionExtensions(
     messages,
     toolToExtension,
   );
+  const extensionsByKey = new Map(
+    extensions.map((extension) => [extension.config_key, extension]),
+  );
 
-  return extensions
-    .filter((extension) => usageByExtension.has(extension.config_key))
+  return Array.from(usageByExtension.keys())
+    .map(
+      (configKey) =>
+        extensionsByKey.get(configKey) ?? unavailableExtension(configKey),
+    )
     .sort((a, b) => {
       const aUsage = usageByExtension.get(a.config_key)?.lastUsedAt ?? 0;
       const bUsage = usageByExtension.get(b.config_key)?.lastUsedAt ?? 0;

@@ -47,7 +47,8 @@ vi.mock("@/shared/api/git", () => ({
 }));
 
 vi.mock("@/features/extensions/api/extensions", () => ({
-  listSessionExtensionStatus: () => Promise.resolve([]),
+  listExtensions: () => Promise.resolve([]),
+  listSessionExtensions: () => Promise.resolve([]),
 }));
 
 vi.mock("../../hooks/ArtifactPolicyContext", () => ({

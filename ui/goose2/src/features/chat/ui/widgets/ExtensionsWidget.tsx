@@ -1,11 +1,17 @@
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { IconApps } from "@tabler/icons-react";
-import { listSessionExtensionStatus } from "@/features/extensions/api/extensions";
+import {
+  listExtensions,
+  listSessionExtensions,
+} from "@/features/extensions/api/extensions";
 import {
   getDisplayName,
+  type ExtensionConfig,
+  type ExtensionEntry,
   type SessionExtensionStatus,
 } from "@/features/extensions/types";
+import { nameToKey } from "@/features/extensions/lib/extensionKeys";
 import { getUsedSessionExtensions } from "@/features/extensions/lib/extensionUsage";
 import { cn } from "@/shared/lib/cn";
 import type { Message } from "@/shared/types/messages";
@@ -18,10 +24,50 @@ interface ExtensionsWidgetProps {
 
 const EMPTY_MESSAGES: Message[] = [];
 
+function toAvailableStatus(extension: ExtensionConfig): SessionExtensionStatus {
+  return {
+    ...extension,
+    config_key: nameToKey(extension.name),
+    status: "available",
+    tools: [],
+  };
+}
+
+function toUnavailableStatus(
+  extension: ExtensionEntry,
+): SessionExtensionStatus {
+  const { enabled: _enabled, ...config } = extension;
+  return {
+    ...config,
+    status: "unavailable",
+    tools: [],
+  };
+}
+
+function mergeExtensionStatuses(
+  sessionExtensions: ExtensionConfig[],
+  configuredExtensions: ExtensionEntry[],
+): SessionExtensionStatus[] {
+  const byKey = new Map(
+    sessionExtensions.map((extension) => [
+      nameToKey(extension.name),
+      toAvailableStatus(extension),
+    ]),
+  );
+  for (const extension of configuredExtensions) {
+    if (!byKey.has(extension.config_key)) {
+      byKey.set(extension.config_key, toUnavailableStatus(extension));
+    }
+  }
+  return Array.from(byKey.values());
+}
+
 function ExtensionRow({ extension }: { extension: SessionExtensionStatus }) {
   const { t } = useTranslation("chat");
   const displayName = getDisplayName(extension);
   const isConnected = extension.status === "connected";
+  const isAvailable = extension.status === "available";
+  const isUnavailable = extension.status === "unavailable";
   const toolCount = extension.tools.length;
 
   return (
@@ -29,7 +75,11 @@ function ExtensionRow({ extension }: { extension: SessionExtensionStatus }) {
       <span
         className={cn(
           "mt-1.5 size-1.5 shrink-0 rounded-full",
-          isConnected ? "bg-green-500" : "bg-amber-500",
+          isConnected || isAvailable
+            ? "bg-green-500"
+            : isUnavailable
+              ? "bg-muted-foreground"
+              : "bg-amber-500",
         )}
       />
       <div className="min-w-0 flex-1">
@@ -37,12 +87,18 @@ function ExtensionRow({ extension }: { extension: SessionExtensionStatus }) {
         <div
           className={cn(
             "mt-0.5 truncate text-[11px]",
-            isConnected ? "text-foreground-subtle" : "text-amber-600",
+            isConnected || isAvailable || isUnavailable
+              ? "text-foreground-subtle"
+              : "text-amber-600",
           )}
         >
           {isConnected
             ? t("contextPanel.widgets.statusConnected")
-            : t("contextPanel.widgets.statusFailed")}
+            : isAvailable
+              ? t("contextPanel.widgets.statusAvailable")
+              : isUnavailable
+                ? t("contextPanel.widgets.statusUnavailable")
+                : t("contextPanel.widgets.statusFailed")}
           {isConnected && toolCount > 0
             ? ` · ${t("contextPanel.widgets.toolCount", { count: toolCount })}`
             : null}
@@ -85,10 +141,15 @@ export function ExtensionsWidget({ sessionId }: ExtensionsWidgetProps) {
     }
 
     setIsLoading(true);
-    listSessionExtensionStatus(sessionId)
-      .then((all) => {
+    Promise.all([
+      listSessionExtensions(sessionId).catch(() => [] as ExtensionConfig[]),
+      listExtensions().catch(() => [] as ExtensionEntry[]),
+    ])
+      .then(([sessionExtensions, configuredExtensions]) => {
         if (isCurrent) {
-          setExtensions(all);
+          setExtensions(
+            mergeExtensionStatuses(sessionExtensions, configuredExtensions),
+          );
         }
       })
       .catch(() => {
@@ -135,7 +196,7 @@ export function ExtensionsWidget({ sessionId }: ExtensionsWidgetProps) {
             <div key={i} className="h-4 animate-pulse rounded bg-muted/40" />
           ))}
         </div>
-      ) : extensions.length === 0 || used.length === 0 ? (
+      ) : used.length === 0 ? (
         <p className="px-3 py-2.5 text-xs text-foreground-subtle">
           {t("contextPanel.empty.noExtensions")}
         </p>

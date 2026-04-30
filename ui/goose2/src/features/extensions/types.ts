@@ -63,7 +63,11 @@ export type ExtensionEntry = ExtensionConfig & {
   enabled: boolean;
 };
 
-export type ExtensionConnectionStatus = "connected" | "failed";
+export type ExtensionConnectionStatus =
+  | "connected"
+  | "failed"
+  | "available"
+  | "unavailable";
 
 export type SessionExtensionStatus = ExtensionConfig & {
   config_key: string;

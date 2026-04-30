@@ -95,4 +95,36 @@ describe("extension usage derivation", () => {
 
     expect(used.map((item) => item.config_key)).toEqual(["newer", "older"]);
   });
+
+  it("keeps historical usage when the extension is no longer in session status", () => {
+    const used = getUsedSessionExtensions(
+      [],
+      [
+        toolRequestMessage(50, {
+          name: "Create issue",
+          extensionName: "Git Hub",
+        }),
+      ],
+    );
+
+    expect(used).toEqual([
+      expect.objectContaining({
+        config_key: "github",
+        display_name: "Github",
+        status: "unavailable",
+      }),
+    ]);
+  });
+
+  it("maps an unprefixed tool call to a configured extension with the same key", () => {
+    const extensions = [extension("analyze", [])];
+    const used = getUsedSessionExtensions(extensions, [
+      toolRequestMessage(60, {
+        name: "analyze",
+        toolName: "analyze",
+      }),
+    ]);
+
+    expect(used.map((item) => item.config_key)).toEqual(["analyze"]);
+  });
 });

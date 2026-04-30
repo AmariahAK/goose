@@ -95,8 +95,10 @@
       "extensionsFailed": "Requieren atención",
       "extensionsUsed": "Usadas en este chat",
       "extensionsUsedTitle": "Extensiones usadas",
+      "statusAvailable": "Disponible en este chat",
       "statusConnected": "Conectada",
       "statusFailed": "No se pudo conectar",
+      "statusUnavailable": "No disponible actualmente",
       "toolCount": "{{count}} herramientas",
       "workspace": "Espacio de trabajo"
     }
