@@ -90,9 +90,10 @@ const LINE_NUMBER_CLASSES = cn(
   "before:content-[counter(line)]",
   "before:inline-block",
   "before:[counter-increment:line]",
-  "before:w-8",
-  "before:mr-4",
-  "before:text-right",
+  "before:w-4",
+  "before:mr-2",
+  "before:text-left",
+  "before:text-[12px]",
   "before:text-muted-foreground/50",
   "before:font-mono",
   "before:select-none",
@@ -331,15 +332,11 @@ export const CodeBlockContainer = ({
 }: HTMLAttributes<HTMLDivElement> & { language: string }) => (
   <div
     className={cn(
-      "group relative w-full min-w-0 max-w-full overflow-hidden rounded-lg border border-border-soft bg-background-alt/50 text-foreground",
+      "group relative w-full min-w-0 max-w-full overflow-visible bg-transparent text-foreground",
       className,
     )}
     data-language={language}
-    style={{
-      containIntrinsicSize: "auto 200px",
-      contentVisibility: "auto",
-      ...style,
-    }}
+    style={style}
     {...props}
   />
 );
@@ -351,7 +348,7 @@ export const CodeBlockHeader = ({
 }: HTMLAttributes<HTMLDivElement>) => (
   <div
     className={cn(
-      "flex min-h-8 items-center justify-between border-border-soft border-b bg-transparent px-3 py-1.5 text-muted-foreground text-xs",
+      "flex min-h-7 items-end justify-between bg-transparent px-0 py-0 text-[11px] text-muted-foreground leading-4",
       className,
     )}
     {...props}
@@ -365,7 +362,7 @@ export const CodeBlockTitle = ({
   className,
   ...props
 }: HTMLAttributes<HTMLDivElement>) => (
-  <div className={cn("flex items-center gap-2", className)} {...props}>
+  <div className={cn("flex items-end gap-2", className)} {...props}>
     {children}
   </div>
 );
@@ -385,10 +382,7 @@ export const CodeBlockActions = ({
   className,
   ...props
 }: HTMLAttributes<HTMLDivElement>) => (
-  <div
-    className={cn("-my-1 -mr-0.5 flex items-center gap-1", className)}
-    {...props}
-  >
+  <div className={cn("flex items-end gap-1", className)} {...props}>
     {children}
   </div>
 );
@@ -447,7 +441,8 @@ export const CodeBlockContent = ({
   return (
     <div
       className={cn(
-        "relative min-w-0 max-w-full overflow-auto",
+        "relative min-w-0 max-w-full overflow-auto rounded-[0.625rem]",
+        !transparentBackground && "border border-border-soft bg-background",
         viewportClassName,
       )}
     >
@@ -547,7 +542,7 @@ export const CodeBlockCopyButton = ({
       variant="ghost"
       {...props}
     >
-      {children ?? <Icon size={14} />}
+      {children ?? <Icon size={12} />}
     </Button>
   );
 };
