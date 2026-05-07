@@ -72,8 +72,9 @@ export function PersonaEditor({
   const readOnlyBySource = persona ? isPersonaReadOnly(persona) : false;
   const isReadOnly = detailsMode || readOnlyBySource;
   const personaSource = persona ? getPersonaSource(persona) : "custom";
-  const canEditPersona = personaSource === "custom";
-  const canDeletePersona = personaSource !== "builtin";
+  const canEditPersona = !readOnlyBySource;
+  const canDeletePersona =
+    personaSource !== "builtin" && persona?.writable !== false;
   const acpProviders = useAgentStore((s) => s.providers);
   const setProviders = useAgentStore((s) => s.setProviders);
   const mergeInventoryEntries = useProviderInventoryStore(

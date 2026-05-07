@@ -8,6 +8,7 @@ use crate::skills::{
     parse_skill_frontmatter, resolve_discoverable_skill_dir, resolve_skill_dir, skill_base_dir,
     validate_skill_name,
 };
+use crate::source_roots::SourceRoot;
 use agent_client_protocol::Error;
 use base64::Engine;
 use fs_err as fs;
@@ -186,6 +187,7 @@ fn project_entry_from_file(file: &Path) -> Option<SourceEntry> {
         content,
         path: file.to_string_lossy().into_owned(),
         global: true,
+        writable: true,
         supporting_files: Vec::new(),
         properties,
         metadata: None,
@@ -282,6 +284,7 @@ fn skill_source_entry(
         content: content.to_string(),
         path: dir.to_string_lossy().to_string(),
         global,
+        writable: true,
         supporting_files: Vec::new(),
         properties,
         metadata: None,
@@ -305,6 +308,7 @@ fn source_entry(
     path: &Path,
     global: bool,
     metadata: Option<Value>,
+    writable: bool,
 ) -> SourceEntry {
     SourceEntry {
         source_type,
@@ -313,6 +317,7 @@ fn source_entry(
         content: content.to_string(),
         path: path.to_string_lossy().to_string(),
         global,
+        writable,
         supporting_files: Vec::new(),
         properties: HashMap::new(),
         metadata,
@@ -556,7 +561,7 @@ fn parse_agent_frontmatter(raw: &str) -> Result<(AgentFrontmatter, String), Erro
         .ok_or_else(|| Error::invalid_params().data("Agent file is missing frontmatter"))
 }
 
-fn agent_source_entry(path: &Path, global: bool) -> Result<SourceEntry, Error> {
+fn agent_source_entry(path: &Path, global: bool, writable: bool) -> Result<SourceEntry, Error> {
     let raw = fs::read_to_string(path)
         .map_err(|e| Error::internal_error().data(format!("Failed to read agent file: {e}")))?;
     let (frontmatter, content) = parse_agent_frontmatter(&raw)?;
@@ -568,11 +573,30 @@ fn agent_source_entry(path: &Path, global: bool) -> Result<SourceEntry, Error> {
         path,
         global,
         agent_metadata_json(frontmatter.provider, frontmatter.model, frontmatter.avatar),
+        writable,
     ))
 }
 
 fn canonicalize_or_original(path: &Path) -> PathBuf {
     path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+}
+
+fn is_under_root(path: &Path, root: &Path) -> bool {
+    canonicalize_or_original(path).starts_with(canonicalize_or_original(root))
+}
+
+fn is_read_only_agent_file(path: &Path, additional_roots: &[SourceRoot]) -> bool {
+    additional_roots
+        .iter()
+        .filter(|root| !root.writable)
+        .any(|root| is_under_root(path, &root.path))
+}
+
+fn reject_read_only_agent_file(path: &Path, additional_roots: &[SourceRoot]) -> Result<(), Error> {
+    if is_read_only_agent_file(path, additional_roots) {
+        return Err(Error::invalid_params().data("Source is read-only"));
+    }
+    Ok(())
 }
 
 fn is_global_agent_file(path: &Path) -> bool {
@@ -590,7 +614,10 @@ fn is_global_agent_file(path: &Path) -> bool {
         .any(|root| canonical_path.starts_with(canonicalize_or_original(&root)))
 }
 
-fn resolve_agent_file(path: &str) -> Result<PathBuf, Error> {
+fn resolve_agent_file_with_roots(
+    path: &str,
+    additional_roots: &[SourceRoot],
+) -> Result<PathBuf, Error> {
     if path.is_empty() {
         return Err(Error::invalid_params().data("Source path must not be empty"));
     }
@@ -613,10 +640,13 @@ fn resolve_agent_file(path: &str) -> Result<PathBuf, Error> {
             grandparent_name,
             Some(".goose") | Some(".claude") | Some(".agents")
         );
+    let in_additional_root = additional_roots
+        .iter()
+        .any(|root| is_under_root(&canonical_file, &root.path));
 
     if !canonical_file.is_file()
         || canonical_file.extension().and_then(|ext| ext.to_str()) != Some("md")
-        || (!in_agent_dir && !is_global_agent_file(&canonical_file))
+        || (!in_agent_dir && !is_global_agent_file(&canonical_file) && !in_additional_root)
     {
         return Err(Error::invalid_params().data(format!("Source \"{}\" not found", path)));
     }
@@ -624,24 +654,49 @@ fn resolve_agent_file(path: &str) -> Result<PathBuf, Error> {
     Ok(canonical_file)
 }
 
-fn list_agent_dirs(working_dir: Option<&Path>) -> Vec<(PathBuf, bool)> {
+fn list_agent_dirs(working_dir: Option<&Path>, additional_roots: &[SourceRoot]) -> Vec<SourceRoot> {
     let mut dirs = Vec::new();
     if let Some(working_dir) = working_dir {
-        dirs.push((working_dir.join(".agents").join("agents"), false));
-        dirs.push((working_dir.join(".goose").join("agents"), false));
-        dirs.push((working_dir.join(".claude").join("agents"), false));
+        dirs.push(SourceRoot {
+            path: working_dir.join(".agents").join("agents"),
+            writable: true,
+        });
+        dirs.push(SourceRoot {
+            path: working_dir.join(".goose").join("agents"),
+            writable: true,
+        });
+        dirs.push(SourceRoot {
+            path: working_dir.join(".claude").join("agents"),
+            writable: true,
+        });
     }
 
     if let Some(home) = dirs::home_dir() {
-        dirs.push((home.join(".agents").join("agents"), true));
-        dirs.push((home.join(".goose").join("agents"), true));
-        dirs.push((home.join(".claude").join("agents"), true));
+        dirs.push(SourceRoot {
+            path: home.join(".agents").join("agents"),
+            writable: true,
+        });
+        dirs.push(SourceRoot {
+            path: home.join(".goose").join("agents"),
+            writable: true,
+        });
+        dirs.push(SourceRoot {
+            path: home.join(".claude").join("agents"),
+            writable: true,
+        });
     }
-    dirs.push((Paths::config_dir().join("agents"), true));
+    dirs.push(SourceRoot {
+        path: Paths::config_dir().join("agents"),
+        writable: true,
+    });
+    dirs.extend(additional_roots.iter().cloned());
     dirs
 }
 
-fn list_agent_sources(project_dir: Option<&str>) -> Vec<SourceEntry> {
+fn list_agent_sources(
+    project_dir: Option<&str>,
+    additional_roots: &[SourceRoot],
+) -> Vec<SourceEntry> {
     let working_dir = project_dir
         .map(str::trim)
         .filter(|path| !path.is_empty())
@@ -649,8 +704,8 @@ fn list_agent_sources(project_dir: Option<&str>) -> Vec<SourceEntry> {
     let mut seen = std::collections::HashSet::new();
     let mut sources = Vec::new();
 
-    for (dir, global) in list_agent_dirs(working_dir.as_deref()) {
-        let entries = match fs::read_dir(&dir) {
+    for root in list_agent_dirs(working_dir.as_deref(), additional_roots) {
+        let entries = match fs::read_dir(&root.path) {
             Ok(entries) => entries,
             Err(_) => continue,
         };
@@ -659,7 +714,7 @@ fn list_agent_sources(project_dir: Option<&str>) -> Vec<SourceEntry> {
             if path.extension().and_then(|ext| ext.to_str()) != Some("md") {
                 continue;
             }
-            match agent_source_entry(&path, global) {
+            match agent_source_entry(&path, !root.writable, root.writable) {
                 Ok(source) => {
                     let key = source.name.to_lowercase();
                     if seen.insert(key) {
@@ -704,7 +759,7 @@ fn create_agent_source(
     fs::write(&file_path, md)
         .map_err(|e| Error::internal_error().data(format!("Failed to write agent file: {e}")))?;
 
-    agent_source_entry(&file_path, global)
+    agent_source_entry(&file_path, global, true)
 }
 
 fn update_agent_source(
@@ -713,15 +768,17 @@ fn update_agent_source(
     description: &str,
     content: &str,
     metadata: Option<Value>,
+    additional_roots: &[SourceRoot],
 ) -> Result<SourceEntry, Error> {
     validate_agent_name(name)?;
-    let file_path = resolve_agent_file(path)?;
+    let file_path = resolve_agent_file_with_roots(path, additional_roots)?;
+    reject_read_only_agent_file(&file_path, additional_roots)?;
     let global = is_global_agent_file(&file_path);
     let md = build_agent_md(name, description, content, metadata)?;
     fs::write(&file_path, md)
         .map_err(|e| Error::internal_error().data(format!("Failed to write agent file: {e}")))?;
 
-    agent_source_entry(&file_path, global)
+    agent_source_entry(&file_path, global, true)
 }
 
 // --- Public CRUD ---
@@ -806,9 +863,31 @@ pub fn update_source(
     metadata: Option<Value>,
     properties: Option<HashMap<String, serde_json::Value>>,
 ) -> Result<SourceEntry, Error> {
+    update_source_with_roots(
+        source_type,
+        path,
+        name,
+        description,
+        content,
+        metadata,
+        properties,
+        &[],
+    )
+}
+
+pub fn update_source_with_roots(
+    source_type: SourceType,
+    path: &str,
+    name: &str,
+    description: &str,
+    content: &str,
+    metadata: Option<Value>,
+    properties: Option<HashMap<String, serde_json::Value>>,
+    additional_roots: &[SourceRoot],
+) -> Result<SourceEntry, Error> {
     require_mutable_type(source_type)?;
     if source_type == SourceType::Agent {
-        return update_agent_source(path, name, description, content, metadata);
+        return update_agent_source(path, name, description, content, metadata, additional_roots);
     }
 
     match source_type {
@@ -823,9 +902,6 @@ pub fn update_source(
                     Error::internal_error().data("Failed to resolve source directory name")
                 })?;
 
-            // When the caller doesn't supply properties, preserve whatever
-            // is already on disk so per-skill frontmatter metadata isn't
-            // silently erased on edit.
             let resolved_properties = match properties {
                 Some(p) => p,
                 None => read_existing_skill_properties(&dir),
@@ -870,9 +946,6 @@ pub fn update_source(
             validate_project_slug(name)?;
             let file = resolve_project_path(path)?;
 
-            // We don't currently support renaming a project (it would change
-            // the slug used as the stable thread.project_id). Reject mismatches
-            // to surface this clearly.
             let current_slug = file
                 .file_stem()
                 .and_then(|s| s.to_str())
@@ -884,7 +957,6 @@ pub fn update_source(
                 )));
             }
 
-            // Same preserve-on-None semantics as skills.
             let resolved_properties = match properties {
                 Some(p) => p,
                 None => read_existing_project_properties(&file),
@@ -906,6 +978,14 @@ pub fn update_source(
 }
 
 pub fn delete_source(source_type: SourceType, path: &str) -> Result<(), Error> {
+    delete_source_with_roots(source_type, path, &[])
+}
+
+pub fn delete_source_with_roots(
+    source_type: SourceType,
+    path: &str,
+    additional_roots: &[SourceRoot],
+) -> Result<(), Error> {
     require_mutable_type(source_type)?;
 
     match source_type {
@@ -922,7 +1002,8 @@ pub fn delete_source(source_type: SourceType, path: &str) -> Result<(), Error> {
             })?;
         }
         SourceType::Agent => {
-            let file_path = resolve_agent_file(path)?;
+            let file_path = resolve_agent_file_with_roots(path, additional_roots)?;
+            reject_read_only_agent_file(&file_path, additional_roots)?;
             fs::remove_file(&file_path).map_err(|e| {
                 Error::internal_error().data(format!("Failed to delete source: {e}"))
             })?;
@@ -936,6 +1017,15 @@ pub fn list_sources(
     source_type: Option<SourceType>,
     project_dir: Option<&str>,
     include_project_sources: bool,
+) -> Result<Vec<SourceEntry>, Error> {
+    list_sources_with_roots(source_type, project_dir, include_project_sources, &[])
+}
+
+pub fn list_sources_with_roots(
+    source_type: Option<SourceType>,
+    project_dir: Option<&str>,
+    include_project_sources: bool,
+    additional_roots: &[SourceRoot],
 ) -> Result<Vec<SourceEntry>, Error> {
     if let Some(t) = source_type {
         require_listable_type(Some(t))?;
@@ -1013,7 +1103,7 @@ pub fn list_sources(
                 sources.extend(read_project_dir()?);
             }
             SourceType::Agent => {
-                sources.extend(list_agent_sources(project_dir));
+                sources.extend(list_agent_sources(project_dir, additional_roots));
             }
             SourceType::Recipe | SourceType::Subrecipe => {
                 return Err(Error::invalid_params()
@@ -1027,6 +1117,14 @@ pub fn list_sources(
 }
 
 pub fn export_source(source_type: SourceType, path: &str) -> Result<(String, String), Error> {
+    export_source_with_roots(source_type, path, &[])
+}
+
+pub fn export_source_with_roots(
+    source_type: SourceType,
+    path: &str,
+    additional_roots: &[SourceRoot],
+) -> Result<(String, String), Error> {
     match source_type {
         SourceType::Skill => {
             let dir = resolve_discoverable_skill_dir(path)?;
@@ -1053,8 +1151,13 @@ pub fn export_source(source_type: SourceType, path: &str) -> Result<(String, Str
             Ok((json, filename))
         }
         SourceType::Agent => {
-            let file_path = resolve_agent_file(path)?;
-            let source = agent_source_entry(&file_path, is_global_agent_file(&file_path))?;
+            let file_path = resolve_agent_file_with_roots(path, additional_roots)?;
+            let writable = !is_read_only_agent_file(&file_path, additional_roots);
+            let source = agent_source_entry(
+                &file_path,
+                is_global_agent_file(&file_path) || !writable,
+                writable,
+            )?;
             let export = serde_json::json!({
                 "version": 1,
                 "type": "agent",
@@ -1257,6 +1360,51 @@ mod tests {
         assert!(validate_skill_name("../escape").is_err());
         assert!(validate_skill_name(&"a".repeat(64)).is_ok());
         assert!(validate_skill_name(&"a".repeat(65)).is_err());
+    }
+
+    #[test]
+    fn lists_additional_read_only_agent_roots() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().join("builtin").join("agents");
+        std::fs::create_dir_all(&root).unwrap();
+        let agent_path = root.join("solo.md");
+        std::fs::write(
+            &agent_path,
+            "---\nname: Solo\ndescription: Built in\n---\n\nYou are Solo.",
+        )
+        .unwrap();
+
+        let sources = list_sources_with_roots(
+            Some(SourceType::Agent),
+            None,
+            &[SourceRoot::read_only(root.clone())],
+        )
+        .unwrap();
+
+        let solo = sources.iter().find(|source| source.name == "Solo").unwrap();
+        assert!(!solo.writable);
+        assert!(solo.global);
+        assert_eq!(solo.directory, agent_path.to_string_lossy());
+
+        let err = update_source_with_roots(
+            SourceType::Agent,
+            &solo.directory,
+            "Solo",
+            "Built in",
+            "Updated",
+            None,
+            &[SourceRoot::read_only(root.canonicalize().unwrap())],
+        )
+        .unwrap_err();
+        assert!(format!("{:?}", err).contains("read-only"));
+
+        let err = delete_source_with_roots(
+            SourceType::Agent,
+            &solo.directory,
+            &[SourceRoot::read_only(root.canonicalize().unwrap())],
+        )
+        .unwrap_err();
+        assert!(format!("{:?}", err).contains("read-only"));
     }
 
     #[test]

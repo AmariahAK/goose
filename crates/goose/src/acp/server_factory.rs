@@ -1,5 +1,6 @@
 use crate::acp::server::{AcpProviderFactory, GooseAcpAgent};
 use crate::agents::GoosePlatform;
+use crate::source_roots::SourceRoot;
 use anyhow::Result;
 use std::sync::Arc;
 use tracing::info;
@@ -9,6 +10,7 @@ pub struct AcpServerFactoryConfig {
     pub data_dir: std::path::PathBuf,
     pub config_dir: std::path::PathBuf,
     pub goose_platform: GoosePlatform,
+    pub additional_source_roots: Vec<SourceRoot>,
 }
 
 pub struct AcpServer {
@@ -47,6 +49,7 @@ impl AcpServer {
             goose_mode,
             disable_session_naming,
             self.config.goose_platform.clone(),
+            self.config.additional_source_roots.clone(),
         )
         .await?;
         info!("Created new ACP agent");

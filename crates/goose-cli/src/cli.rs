@@ -7,6 +7,7 @@ use goose::config::{Config, GooseMode};
 #[cfg(feature = "telemetry")]
 use goose::posthog::get_telemetry_choice;
 use goose::recipe::Recipe;
+use goose::source_roots::SourceRoot;
 use goose_mcp::mcp_server_runner::{serve, McpCommand};
 use goose_mcp::{AutoVisualiserRouter, ComputerControllerServer, MemoryServer, TutorialServer};
 
@@ -791,6 +792,14 @@ enum Command {
             action = clap::ArgAction::Append
         )]
         builtins: Vec<String>,
+
+        #[arg(
+            long = "agent-root",
+            value_name = "PATH",
+            help = "Add a read-only directory containing bundled agent markdown files",
+            action = clap::ArgAction::Append
+        )]
+        agent_roots: Vec<std::path::PathBuf>,
     },
 
     /// Start or resume interactive chat sessions
@@ -1109,7 +1118,12 @@ async fn handle_mcp_command(server: McpCommand) -> Result<()> {
     Ok(())
 }
 
-async fn handle_serve_command(host: String, port: u16, builtins: Vec<String>) -> Result<()> {
+async fn handle_serve_command(
+    host: String,
+    port: u16,
+    builtins: Vec<String>,
+    agent_roots: Vec<std::path::PathBuf>,
+) -> Result<()> {
     use goose::acp::server_factory::{AcpServer, AcpServerFactoryConfig};
     use goose::acp::transport::create_router;
     use goose::config::paths::Paths;
@@ -1123,11 +1137,20 @@ async fn handle_serve_command(host: String, port: u16, builtins: Vec<String>) ->
         builtins
     };
 
+    let additional_source_roots = agent_roots
+        .into_iter()
+        .map(|path| {
+            let path = path.canonicalize().unwrap_or(path);
+            SourceRoot::read_only(path)
+        })
+        .collect();
+
     let server = Arc::new(AcpServer::new(AcpServerFactoryConfig {
         builtins,
         data_dir: Paths::data_dir(),
         config_dir: Paths::config_dir(),
         goose_platform: GoosePlatform::GooseCli,
+        additional_source_roots,
     }));
     let secret_key = std::env::var(GOOSE_SERVER_SECRET_KEY_ENV)
         .ok()
@@ -1835,7 +1858,8 @@ pub async fn cli() -> anyhow::Result<()> {
             host,
             port,
             builtins,
-        }) => handle_serve_command(host, port, builtins).await,
+            agent_roots,
+        }) => handle_serve_command(host, port, builtins, agent_roots).await,
         Some(Command::Session {
             command: Some(cmd), ..
         }) => handle_session_subcommand(cmd).await,

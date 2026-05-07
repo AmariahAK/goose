@@ -13,5 +13,5 @@ export function getPersonaSource(persona: Persona): PersonaSource {
 }
 
 export function isPersonaReadOnly(persona: Persona): boolean {
-  return getPersonaSource(persona) !== "custom";
+  return persona.writable === false || getPersonaSource(persona) !== "custom";
 }

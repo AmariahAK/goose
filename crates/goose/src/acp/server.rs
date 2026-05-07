@@ -23,6 +23,7 @@ use crate::providers::inventory::{
 };
 use crate::session::session_manager::SessionType;
 use crate::session::{EnabledExtensionsState, Session, SessionManager};
+use crate::source_roots::SourceRoot;
 use crate::utils::sanitize_unicode_tags;
 use agent_client_protocol::schema::{
     AgentCapabilities, Annotations, AuthMethod, AuthMethodAgent, AuthenticateRequest,
@@ -239,6 +240,7 @@ pub struct GooseAcpAgent {
     disable_session_naming: bool,
     provider_inventory: ProviderInventoryService,
     goose_platform: GoosePlatform,
+    additional_source_roots: Vec<SourceRoot>,
 }
 
 /// Shorten a session/thread id for perf log correlation.
@@ -1054,6 +1056,7 @@ impl GooseAcpAgent {
         goose_mode: GooseMode,
         disable_session_naming: bool,
         goose_platform: GoosePlatform,
+        additional_source_roots: Vec<SourceRoot>,
     ) -> Result<Self> {
         let session_manager = Arc::new(SessionManager::new(data_dir));
 
@@ -1084,6 +1087,7 @@ impl GooseAcpAgent {
             disable_session_naming,
             provider_inventory,
             goose_platform,
+            additional_source_roots,
         })
     }
 
@@ -3478,6 +3482,7 @@ pub async fn run(builtins: Vec<String>) -> Result<()> {
             data_dir: Paths::data_dir(),
             config_dir: Paths::config_dir(),
             goose_platform: GoosePlatform::GooseCli,
+            additional_source_roots: Vec::new(),
         },
     );
     let agent = server.create_agent().await?;

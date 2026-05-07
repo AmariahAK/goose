@@ -194,6 +194,7 @@ pub async fn spawn_acp_server_in_process(
         goose_mode,
         disable_session_naming,
         GoosePlatform::GooseCli,
+        Vec::new(),
     )
     .await
     .unwrap();

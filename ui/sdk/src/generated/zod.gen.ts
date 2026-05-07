@@ -792,6 +792,7 @@ export const zSourceEntry = z.object({
     content: z.string(),
     path: z.string(),
     global: z.boolean(),
+    writable: z.boolean().optional().default(false),
     supportingFiles: z.array(z.string()).optional(),
     properties: z.record(z.unknown()).optional(),
     metadata: z.unknown().optional()

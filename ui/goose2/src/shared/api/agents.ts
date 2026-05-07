@@ -50,6 +50,7 @@ function personaMetadata(
 }
 
 function toPersona(source: AgentSourceEntry): Persona {
+  const writable = source.writable !== false;
   return {
     id: source.directory,
     displayName: source.name,
@@ -57,8 +58,9 @@ function toPersona(source: AgentSourceEntry): Persona {
     systemPrompt: source.content,
     provider: source.metadata?.provider,
     model: source.metadata?.model,
-    isBuiltin: false,
-    isFromDisk: false,
+    isBuiltin: !writable,
+    isFromDisk: writable,
+    writable,
     createdAt: "",
     updatedAt: "",
   };

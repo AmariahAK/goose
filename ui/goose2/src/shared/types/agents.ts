@@ -34,6 +34,7 @@ export interface Persona {
   model?: string;
   isBuiltin: boolean;
   isFromDisk?: boolean;
+  writable?: boolean;
   createdAt: string;
   updatedAt: string;
 }

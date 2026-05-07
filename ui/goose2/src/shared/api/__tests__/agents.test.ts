@@ -41,6 +41,7 @@ const source = {
   content: "Research carefully.",
   directory: "/Users/test/.agents/agents/scout.md",
   global: true,
+  writable: true,
   metadata: {
     provider: "goose",
     model: "claude-sonnet-4",
@@ -68,7 +69,8 @@ describe("agents API", () => {
         provider: "goose",
         model: "claude-sonnet-4",
         isBuiltin: false,
-        isFromDisk: false,
+        isFromDisk: true,
+        writable: true,
         createdAt: "",
         updatedAt: "",
       },
