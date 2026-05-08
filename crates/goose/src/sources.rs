@@ -164,6 +164,18 @@ fn read_existing_project_properties(file: &Path) -> HashMap<String, serde_json::
     properties
 }
 
+/// Read the properties bag out of an existing agent file.
+fn read_existing_agent_properties(file: &Path) -> HashMap<String, serde_json::Value> {
+    let raw = match fs::read_to_string(file) {
+        Ok(s) => s,
+        Err(_) => return HashMap::new(),
+    };
+    match parse_agent_frontmatter(&raw) {
+        Ok((frontmatter, _)) => frontmatter.properties,
+        Err(_) => HashMap::new(),
+    }
+}
+
 fn project_entry_from_file(file: &Path) -> Option<SourceEntry> {
     let slug = file.file_stem().and_then(|s| s.to_str())?.to_string();
     if slug.is_empty() {
@@ -419,6 +431,7 @@ fn reject_read_only_agent_file(path: &Path, additional_roots: &[SourceRoot]) -> 
 fn is_global_agent_file(path: &Path) -> bool {
     let canonical_path = canonicalize_or_original(path);
     let mut global_roots = Vec::new();
+    global_roots.push(Paths::agents_dir());
     if let Some(home) = dirs::home_dir() {
         global_roots.push(home.join(".agents").join("agents"));
         global_roots.push(home.join(".goose").join("agents"));
@@ -488,6 +501,10 @@ fn list_agent_dirs(working_dir: Option<&Path>, additional_roots: &[SourceRoot]) 
         });
     }
 
+    dirs.push(SourceRoot {
+        path: Paths::agents_dir(),
+        writable: true,
+    });
     if let Some(home) = dirs::home_dir() {
         dirs.push(SourceRoot {
             path: home.join(".agents").join("agents"),
@@ -508,6 +525,13 @@ fn list_agent_dirs(working_dir: Option<&Path>, additional_roots: &[SourceRoot]) 
     });
     dirs.extend(additional_roots.iter().cloned());
     dirs
+}
+
+fn is_project_agent_file(path: &Path, working_dir: &Path) -> bool {
+    [".agents", ".goose", ".claude"]
+        .into_iter()
+        .map(|dir| working_dir.join(dir).join("agents"))
+        .any(|root| is_under_root(path, &root))
 }
 
 fn list_agent_sources(
@@ -531,7 +555,10 @@ fn list_agent_sources(
             if path.extension().and_then(|ext| ext.to_str()) != Some("md") {
                 continue;
             }
-            match agent_source_entry(&path, !root.writable, root.writable) {
+            let global = working_dir
+                .as_deref()
+                .is_none_or(|working_dir| !is_project_agent_file(&path, working_dir));
+            match agent_source_entry(&path, global, root.writable) {
                 Ok(source) => {
                     let key = source.name.to_lowercase();
                     if seen.insert(key) {
@@ -584,14 +611,18 @@ fn update_agent_source(
     name: &str,
     description: &str,
     content: &str,
-    properties: HashMap<String, serde_json::Value>,
+    properties: Option<HashMap<String, serde_json::Value>>,
     additional_roots: &[SourceRoot],
 ) -> Result<SourceEntry, Error> {
     validate_agent_name(name)?;
     let file_path = resolve_agent_file_with_roots(path, additional_roots)?;
     reject_read_only_agent_file(&file_path, additional_roots)?;
     let global = is_global_agent_file(&file_path);
-    let md = build_source_markdown(name, description, content, &properties)?;
+    let resolved_properties = match properties {
+        Some(p) => p,
+        None => read_existing_agent_properties(&file_path),
+    };
+    let md = build_source_markdown(name, description, content, &resolved_properties)?;
     fs::write(&file_path, md)
         .map_err(|e| Error::internal_error().data(format!("Failed to write agent file: {e}")))?;
 
@@ -711,7 +742,7 @@ pub fn update_source_with_roots(
             name,
             description,
             content,
-            options.properties.unwrap_or_default(),
+            options.properties,
             options.additional_roots,
         );
     }
