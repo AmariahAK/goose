@@ -246,17 +246,18 @@ fn apply_claude_thinking_config(payload: &mut Value, model_config: &ModelConfig)
             );
         }
         ThinkingType::Enabled => {
-            let budget_tokens = thinking_budget_tokens(model_config);
-            let max_tokens = model_config.max_output_tokens() + budget_tokens;
-            obj.insert("max_tokens".to_string(), json!(max_tokens));
-            obj.insert(
-                "thinking".to_string(),
-                json!({
-                    "type": "enabled",
-                    "budget_tokens": budget_tokens
-                }),
-            );
-            obj.insert("temperature".to_string(), json!(2));
+            if let Some(budget_tokens) = thinking_budget_tokens(model_config) {
+                let max_tokens = model_config.max_output_tokens() + budget_tokens;
+                obj.insert("max_tokens".to_string(), json!(max_tokens));
+                obj.insert(
+                    "thinking".to_string(),
+                    json!({
+                        "type": "enabled",
+                        "budget_tokens": budget_tokens
+                    }),
+                );
+                obj.insert("temperature".to_string(), json!(2));
+            }
         }
         ThinkingType::Disabled => {
             if let Some(temp) = model_config.temperature {

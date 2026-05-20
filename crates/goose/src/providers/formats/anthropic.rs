@@ -497,10 +497,8 @@ pub fn get_usage(data: &Value) -> Result<Usage> {
     }
 }
 
-pub fn thinking_effort(model_config: &ModelConfig) -> ThinkingEffort {
-    model_config
-        .thinking_effort()
-        .unwrap_or(ThinkingEffort::High)
+pub fn thinking_effort(model_config: &ModelConfig) -> Option<ThinkingEffort> {
+    model_config.thinking_effort()
 }
 
 pub fn adaptive_effort_value(model_config: &ModelConfig) -> Option<&'static str> {
@@ -521,30 +519,43 @@ fn adaptive_effort_value_for_model(
     }
 }
 
-pub fn thinking_budget_tokens(model_config: &ModelConfig) -> i32 {
-    if let Some(request_param) = model_config
+pub fn thinking_budget_tokens(model_config: &ModelConfig) -> Option<i32> {
+    thinking_budget_tokens_for_effort(model_config, model_config.thinking_effort())
+}
+
+fn thinking_budget_tokens_for_effort(
+    model_config: &ModelConfig,
+    effort: Option<ThinkingEffort>,
+) -> Option<i32> {
+    let request_budget = model_config
         .request_params
         .as_ref()
         .and_then(|params| params.get("budget_tokens"))
-        .and_then(|v| serde_json::from_value::<i32>(v.clone()).ok())
-    {
-        return request_param.max(1024);
+        .and_then(|v| serde_json::from_value::<i32>(v.clone()).ok());
+
+    thinking_budget_tokens_for_values(request_budget, legacy_thinking_budget_tokens(), effort)
+}
+
+fn thinking_budget_tokens_for_values(
+    request_budget: Option<i32>,
+    legacy_budget: Option<i32>,
+    effort: Option<ThinkingEffort>,
+) -> Option<i32> {
+    if let Some(request_budget) = request_budget {
+        return Some(request_budget.max(1024));
     }
 
-    if let Some(budget) = legacy_thinking_budget_tokens() {
-        return budget;
+    if let Some(legacy_budget) = legacy_budget {
+        return Some(legacy_budget);
     }
 
-    let effort = model_config
-        .thinking_effort()
-        .unwrap_or(ThinkingEffort::High);
-    match effort {
+    Some(match effort? {
         ThinkingEffort::Off => 1024,
         ThinkingEffort::Low => 4000,
         ThinkingEffort::Medium => 10000,
         ThinkingEffort::High => 16000,
         ThinkingEffort::Max => 32000,
-    }
+    })
 }
 
 fn legacy_thinking_budget_tokens() -> Option<i32> {
@@ -575,16 +586,16 @@ fn apply_thinking_config(
             }
         }
         ThinkingType::Enabled => {
-            let budget_tokens = thinking_budget_tokens(model_config);
-
-            obj.insert("max_tokens".to_string(), json!(max_tokens + budget_tokens));
-            obj.insert(
-                "thinking".to_string(),
-                json!({
-                    "type": "enabled",
-                    "budget_tokens": budget_tokens
-                }),
-            );
+            if let Some(budget_tokens) = thinking_budget_tokens(model_config) {
+                obj.insert("max_tokens".to_string(), json!(max_tokens + budget_tokens));
+                obj.insert(
+                    "thinking".to_string(),
+                    json!({
+                        "type": "enabled",
+                        "budget_tokens": budget_tokens
+                    }),
+                );
+            }
         }
         ThinkingType::Disabled => {}
     }
@@ -600,15 +611,16 @@ fn apply_thinking_config(
                     obj.insert("output_config".to_string(), json!({"effort": effort}));
                 }
             } else {
-                let budget_tokens = thinking_budget_tokens(model_config);
-                obj.insert("max_tokens".to_string(), json!(max_tokens + budget_tokens));
-                obj.insert(
-                    "thinking".to_string(),
-                    json!({
-                        "type": "enabled",
-                        "budget_tokens": budget_tokens
-                    }),
-                );
+                if let Some(budget_tokens) = thinking_budget_tokens(model_config) {
+                    obj.insert("max_tokens".to_string(), json!(max_tokens + budget_tokens));
+                    obj.insert(
+                        "thinking".to_string(),
+                        json!({
+                            "type": "enabled",
+                            "budget_tokens": budget_tokens
+                        }),
+                    );
+                }
             }
         }
 
@@ -1317,6 +1329,7 @@ mod tests {
     #[test]
     fn test_create_request_preserves_thinking_context_for_compatible_models() -> Result<()> {
         let _guard = env_lock::lock_env([
+            ("GOOSE_THINKING_EFFORT", None::<&str>),
             ("CLAUDE_THINKING_TYPE", None::<&str>),
             ("CLAUDE_THINKING_ENABLED", None::<&str>),
             ("ANTHROPIC_THINKING_BUDGET", None::<&str>),
@@ -1325,7 +1338,7 @@ mod tests {
             ("ANTHROPIC_PRESERVE_UNSIGNED_THINKING", None::<&str>),
         ]);
 
-        let mut config = cfg("glm-4.7");
+        let mut config = cfg_with_effort("glm-4.7", "high");
         config.max_tokens = Some(4096);
         let messages = vec![
             Message::assistant().with_content(MessageContent::thinking("internal", "")),
@@ -1357,6 +1370,11 @@ mod tests {
     }
 
     #[test]
+    fn test_thinking_budget_omits_unset_default() {
+        assert_eq!(thinking_budget_tokens_for_values(None, None, None), None);
+    }
+
+    #[test]
     fn test_create_request_model_params_enable_preserved_thinking_context() -> Result<()> {
         let _guard = env_lock::lock_env([
             ("CLAUDE_THINKING_TYPE", None::<&str>),
@@ -1369,6 +1387,7 @@ mod tests {
 
         let mut params = std::collections::HashMap::new();
         params.insert("preserve_thinking_context".to_string(), json!(true));
+        params.insert("thinking_effort".to_string(), json!("high"));
 
         let mut config = cfg("glm-4.7");
         config.request_params = Some(params);
@@ -1606,7 +1625,7 @@ mod tests {
             ("CLAUDE_THINKING_BUDGET", None::<&str>),
         ]);
         let config = cfg_with_effort("claude-3-7-sonnet-20250219", "high");
-        assert_eq!(thinking_budget_tokens(&config), 8192);
+        assert_eq!(thinking_budget_tokens(&config), Some(8192));
     }
 
     #[test]

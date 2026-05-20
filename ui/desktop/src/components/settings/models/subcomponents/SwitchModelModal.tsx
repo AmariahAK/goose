@@ -26,6 +26,8 @@ import { getPredefinedModelsFromEnv, shouldShowPredefinedModels } from '../prede
 import type { ProviderType, ThinkingEffort } from '../../../../api';
 import { trackModelChanged } from '../../../../utils/analytics';
 
+const DEFAULT_THINKING_EFFORT: ThinkingEffort = 'high';
+
 const i18n = defineMessages({
   thinkingEffortOff: {
     id: 'switchModelModal.thinkingEffortOff',
@@ -413,9 +415,9 @@ export const SwitchModelModal = ({
       };
 
       if (showThinkingControl) {
-        const effort = (thinkingEffort ?? modelObj.request_params?.thinking_effort) as
-          | ThinkingEffort
-          | undefined;
+        const effort = (thinkingEffort ??
+          modelObj.request_params?.thinking_effort ??
+          DEFAULT_THINKING_EFFORT) as ThinkingEffort;
         if (effort) {
           modelObj = {
             ...modelObj,
@@ -709,7 +711,9 @@ export const SwitchModelModal = ({
   };
 
   const selectedThinkingEffort =
-    thinkingEffort ?? (selectedPredefinedModel?.request_params?.thinking_effort as ThinkingEffort);
+    thinkingEffort ??
+    (selectedPredefinedModel?.request_params?.thinking_effort as ThinkingEffort | undefined) ??
+    DEFAULT_THINKING_EFFORT;
 
   const thinkingEffortControl = showThinkingControl && (
     <div className="mt-2">

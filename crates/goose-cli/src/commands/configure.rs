@@ -777,7 +777,7 @@ pub async fn configure_provider_dialog() -> anyhow::Result<bool> {
                 .item("medium", "Medium - Moderate thinking", "")
                 .item("high", "High - Deep reasoning", "")
                 .item("max", "Max - No constraints on thinking depth", "")
-                .initial_value("off")
+                .initial_value("high")
                 .interact()?;
             config.set_goose_thinking_effort(effort)?;
         }
