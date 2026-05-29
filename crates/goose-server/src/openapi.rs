@@ -570,6 +570,7 @@ derive_utoipa!(IconTheme as IconThemeSchema);
         ThinkingEffort,
         super::routes::config_management::ProviderModelInfoQuery,
         Session,
+        goose::session::session_manager::ClientSystemPrompt,
         goose::config::goose_mode::GooseMode,
         SessionInsights,
         SessionType,

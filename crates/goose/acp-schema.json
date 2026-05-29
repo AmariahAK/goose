@@ -191,7 +191,7 @@
         "sessionId",
         "text"
       ],
-      "description": "Set, append, or clear system prompt text for a session.\n\n`mode: \"set\"` replaces Goose's base system prompt. `mode: \"append\"` adds an\ninstruction under \"Additional Instructions\". Reusing a key replaces the\nprevious value for that mode/key; sending empty text clears it.",
+      "description": "Set, append, or clear system prompt text for a session.\n\n`mode: \"set\"` replaces Goose's base system prompt. `mode: \"append\"` adds an\ninstruction under \"Additional Instructions\". Reusing a key replaces the\nprevious value for that mode/key; sending empty text clears it.\n\nPersistence: values set with `mode = Set`, or with `mode = Append` and a\n`key` starting with `client_`, are persisted to the session record and\nrehydrated when the session is loaded. Other `Append` keys (e.g. `recipe`,\n`final_output`, `additional`, `hints_*`) are server-managed and only mutate\nthe in-memory PromptManager for the current process; they're rebuilt from\nsession state on the next agent spawn.",
       "x-side": "agent",
       "x-method": "_goose/unstable/session/system-prompt/set"
     },

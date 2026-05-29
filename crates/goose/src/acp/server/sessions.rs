@@ -1,5 +1,15 @@
 use super::*;
 
+/// Returns true if `key` (used with `SessionSystemPromptMode::Append`) is
+/// considered client-authored and should be persisted to the session record.
+///
+/// Server-managed keys (`recipe`, `final_output`, `additional`, `hints_*`,
+/// `chat_mode`, etc.) are rebuilt at agent-spawn time from other session
+/// state, so they must not be persisted via the client-driven path.
+pub(super) fn is_client_authored_key(key: &str) -> bool {
+    key.starts_with("client_")
+}
+
 impl GooseAcpAgent {
     pub(super) async fn on_update_working_dir(
         &self,
@@ -38,20 +48,31 @@ impl GooseAcpAgent {
         &self,
         req: SetSessionSystemPromptRequest,
     ) -> Result<EmptyResponse, agent_client_protocol::Error> {
-        let session_id = req.session_id.trim();
+        let session_id = req.session_id.trim().to_string();
         if session_id.is_empty() {
             return Err(
                 agent_client_protocol::Error::invalid_params().data("sessionId cannot be empty")
             );
         }
 
-        let agent = self.get_session_agent_provider_ready(session_id).await?;
-        match req.mode {
+        let agent = self.get_session_agent_provider_ready(&session_id).await?;
+
+        enum PersistOp {
+            SetOverride(Option<String>),
+            UpsertExtra { key: String, text: String },
+            RemoveExtra(String),
+            Skip,
+        }
+
+        let persist_op = match req.mode {
             SessionSystemPromptMode::Set => {
-                if req.text.trim().is_empty() {
+                let trimmed_empty = req.text.trim().is_empty();
+                if trimmed_empty {
                     agent.clear_system_prompt_override().await;
+                    PersistOp::SetOverride(None)
                 } else {
-                    agent.override_system_prompt(req.text).await;
+                    agent.override_system_prompt(req.text.clone()).await;
+                    PersistOp::SetOverride(Some(req.text))
                 }
             }
             SessionSystemPromptMode::Append => {
@@ -63,13 +84,56 @@ impl GooseAcpAgent {
                     .ok_or_else(|| {
                         agent_client_protocol::Error::invalid_params()
                             .data("key cannot be empty for append mode")
-                    })?;
-                if req.text.trim().is_empty() {
-                    agent.remove_system_prompt_extra(key).await;
+                    })?
+                    .to_string();
+                let trimmed_empty = req.text.trim().is_empty();
+                let op = if !is_client_authored_key(&key) {
+                    warn!(
+                        key = %key,
+                        "system-prompt set: key not in client-authored allowlist; applied to in-memory PromptManager only (not persisted)"
+                    );
+                    PersistOp::Skip
+                } else if trimmed_empty {
+                    PersistOp::RemoveExtra(key.clone())
                 } else {
-                    agent.extend_system_prompt(key.to_string(), req.text).await;
+                    PersistOp::UpsertExtra {
+                        key: key.clone(),
+                        text: req.text.clone(),
+                    }
+                };
+                if trimmed_empty {
+                    agent.remove_system_prompt_extra(&key).await;
+                } else {
+                    agent.extend_system_prompt(key, req.text).await;
                 }
+                op
             }
+        };
+
+        if !matches!(persist_op, PersistOp::Skip) {
+            let session = self
+                .session_manager
+                .get_session(&session_id, false)
+                .await
+                .internal_err()?;
+            let mut state = session.client_system_prompt.unwrap_or_default();
+            match persist_op {
+                PersistOp::SetOverride(value) => state.override_text = value,
+                PersistOp::UpsertExtra { key, text } => {
+                    state.extras.insert(key, text);
+                }
+                PersistOp::RemoveExtra(key) => {
+                    state.extras.remove(&key);
+                }
+                PersistOp::Skip => unreachable!(),
+            }
+            let next = if state.is_empty() { None } else { Some(state) };
+            self.session_manager
+                .update(&session_id)
+                .client_system_prompt(next)
+                .apply()
+                .await
+                .internal_err()?;
         }
 
         Ok(EmptyResponse {})

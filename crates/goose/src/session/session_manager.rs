@@ -12,14 +12,14 @@ use rmcp::model::Role;
 use serde::{Deserialize, Serialize};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::{Pool, Sqlite};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock};
 use tracing::{info, warn};
 use utoipa::ToSchema;
 
-pub const CURRENT_SCHEMA_VERSION: i32 = 13;
+pub const CURRENT_SCHEMA_VERSION: i32 = 14;
 pub const SESSIONS_FOLDER: &str = "sessions";
 pub const DB_NAME: &str = "sessions.db";
 
@@ -86,6 +86,29 @@ pub struct Session {
     pub archived_at: Option<DateTime<Utc>>,
     #[serde(default)]
     pub project_id: Option<String>,
+    #[serde(default)]
+    pub client_system_prompt: Option<ClientSystemPrompt>,
+}
+
+/// Client-authored system prompt state persisted with a session.
+///
+/// Populated via the ACP `_goose/unstable/session/system-prompt/set` method.
+/// `override_text` mirrors `PromptManager::system_prompt_override` (Set mode);
+/// `extras` mirrors a filtered subset of `PromptManager::system_prompt_extras`
+/// (Append mode, only keys whose persistence is allow-listed at the handler).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ClientSystemPrompt {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub override_text: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub extras: BTreeMap<String, String>,
+}
+
+impl ClientSystemPrompt {
+    pub fn is_empty(&self) -> bool {
+        self.override_text.is_none() && self.extras.is_empty()
+    }
 }
 
 pub struct SessionUpdateBuilder<'a> {
@@ -112,6 +135,7 @@ pub struct SessionUpdateBuilder<'a> {
     archived_at: Option<Option<DateTime<Utc>>>,
 
     project_id: Option<Option<String>>,
+    client_system_prompt: Option<Option<ClientSystemPrompt>>,
 }
 
 #[derive(Serialize, ToSchema, Debug)]
@@ -146,6 +170,7 @@ impl<'a> SessionUpdateBuilder<'a> {
             goose_mode: None,
             archived_at: None,
             project_id: None,
+            client_system_prompt: None,
         }
     }
 
@@ -266,6 +291,11 @@ impl<'a> SessionUpdateBuilder<'a> {
 
     pub fn project_id(mut self, project_id: Option<String>) -> Self {
         self.project_id = Some(project_id);
+        self
+    }
+
+    pub fn client_system_prompt(mut self, value: Option<ClientSystemPrompt>) -> Self {
+        self.client_system_prompt = Some(value);
         self
     }
 }
@@ -563,6 +593,7 @@ impl Default for Session {
             goose_mode: GooseMode::default(),
             archived_at: None,
             project_id: None,
+            client_system_prompt: None,
         }
     }
 }
@@ -587,6 +618,18 @@ impl sqlx::FromRow<'_, sqlx::sqlite::SqliteRow> for Session {
 
         let model_config_json: Option<String> = row.try_get("model_config_json").ok().flatten();
         let model_config = model_config_json.and_then(|json| serde_json::from_str(&json).ok());
+
+        let client_system_prompt: Option<ClientSystemPrompt> = row
+            .try_get::<Option<String>, _>("client_system_prompt_json")
+            .ok()
+            .flatten()
+            .and_then(|json| match serde_json::from_str::<ClientSystemPrompt>(&json) {
+                Ok(value) => Some(value),
+                Err(err) => {
+                    warn!(error = %err, "failed to parse client_system_prompt_json; treating as None");
+                    None
+                }
+            });
 
         let name: String = {
             let name_val: String = row.try_get("name").unwrap_or_default();
@@ -635,6 +678,7 @@ impl sqlx::FromRow<'_, sqlx::sqlite::SqliteRow> for Session {
                 .unwrap_or_default(),
             archived_at: row.try_get("archived_at").ok(),
             project_id: row.try_get("project_id").ok().flatten(),
+            client_system_prompt,
         })
     }
 }
@@ -752,7 +796,8 @@ impl SessionStorage {
                 model_config_json TEXT,
                 goose_mode TEXT NOT NULL DEFAULT 'auto',
                 archived_at TIMESTAMP,
-                project_id TEXT
+                project_id TEXT,
+                client_system_prompt_json TEXT
             )
         "#,
         )
@@ -1187,6 +1232,19 @@ impl SessionStorage {
                         .await?;
                 }
             }
+            14 => {
+                let has_col = sqlx::query_scalar::<_, i32>(
+                    "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'client_system_prompt_json'",
+                )
+                .fetch_one(&mut **tx)
+                .await?
+                    > 0;
+                if !has_col {
+                    sqlx::query("ALTER TABLE sessions ADD COLUMN client_system_prompt_json TEXT")
+                        .execute(&mut **tx)
+                        .await?;
+                }
+            }
             _ => {
                 anyhow::bail!("Unknown migration version: {}", version);
             }
@@ -1250,7 +1308,7 @@ impl SessionStorage {
                accumulated_cost,
                schedule_id, recipe_json, user_recipe_values_json,
                provider_name, model_config_json, goose_mode,
-               archived_at, project_id
+               archived_at, project_id, client_system_prompt_json
         FROM sessions
         WHERE id = ?
     "#,
@@ -1318,6 +1376,7 @@ impl SessionStorage {
         add_update!(builder.archived_at, "archived_at");
 
         add_update!(builder.project_id, "project_id");
+        add_update!(builder.client_system_prompt, "client_system_prompt_json");
 
         if updates.is_empty() {
             return Ok(());
@@ -1395,6 +1454,12 @@ impl SessionStorage {
 
         if let Some(ref project_id) = builder.project_id {
             q = q.bind(project_id.as_ref());
+        }
+        if let Some(client_system_prompt) = builder.client_system_prompt {
+            let json = client_system_prompt
+                .map(|csp| serde_json::to_string(&csp))
+                .transpose()?;
+            q = q.bind(json);
         }
 
         let pool = self.pool().await?;
@@ -1582,7 +1647,7 @@ impl SessionStorage {
                    s.accumulated_cost,
                    s.schedule_id, s.recipe_json, s.user_recipe_values_json,
                    s.provider_name, s.model_config_json, s.goose_mode,
-                   s.archived_at, s.project_id,
+                   s.archived_at, s.project_id, s.client_system_prompt_json,
                    COUNT(m.id) as message_count
             FROM sessions s
             {}

@@ -1557,6 +1557,15 @@ impl GooseAcpAgent {
                     .await
                     .map_err(|e| e.to_string())?;
 
+                if let Some(persisted) = goose_session.client_system_prompt.as_ref() {
+                    if let Some(text) = persisted.override_text.as_ref() {
+                        agent.override_system_prompt(text.clone()).await;
+                    }
+                    for (key, text) in &persisted.extras {
+                        agent.extend_system_prompt(key.clone(), text.clone()).await;
+                    }
+                }
+
                 Ok(agent)
             }
             .await;
@@ -2392,6 +2401,35 @@ fn extract_tool_call_update_meta(
     Some(meta_map)
 }
 
+fn sha256_short(s: &str) -> String {
+    let digest = Sha256::digest(s.as_bytes());
+    digest.iter().take(8).map(|b| format!("{b:02x}")).collect()
+}
+
+/// Build a `_meta.clientSystemPrompt` map of `key -> sha256_short(value)`
+/// fingerprints for the session's persisted client-authored system prompt
+/// state. Returns `None` when nothing is persisted, so the meta field is
+/// omitted entirely in that case.
+fn client_system_prompt_meta(session: &Session) -> Option<Meta> {
+    let csp = session.client_system_prompt.as_ref()?;
+    let mut keys = serde_json::Map::new();
+    if let Some(text) = &csp.override_text {
+        keys.insert("override".to_string(), sha256_short(text).into());
+    }
+    for (key, value) in &csp.extras {
+        keys.insert(key.clone(), sha256_short(value).into());
+    }
+    if keys.is_empty() {
+        return None;
+    }
+    let mut meta = serde_json::Map::new();
+    meta.insert(
+        "clientSystemPrompt".to_string(),
+        serde_json::Value::Object(keys),
+    );
+    Some(meta)
+}
+
 fn replay_message_meta(message: &Message) -> Meta {
     let mut meta = serde_json::Map::new();
     meta.insert(
@@ -2990,6 +3028,8 @@ impl GooseAcpAgent {
             .prepare_session_init_config(&resolved, &mode_state, &goose_session)
             .await;
 
+        let csp_meta = client_system_prompt_meta(&goose_session);
+
         self.spawn_agent_setup(
             cx,
             agent_tx,
@@ -3008,6 +3048,9 @@ impl GooseAcpAgent {
         }
         if let Some(co) = config_options {
             response = response.config_options(co);
+        }
+        if let Some(meta) = csp_meta {
+            response = response.meta(meta);
         }
         if let Some(usage_update) = initial_usage_update {
             cx.send_notification(SessionNotification::new(
@@ -4473,6 +4516,7 @@ print(\"hello, world\")
             goose_mode: GooseMode::default(),
             archived_at: None,
             project_id: None,
+            client_system_prompt: None,
         }
     }
 

@@ -8,8 +8,11 @@ use common_tests::fixtures::{
     TestConnectionConfig,
 };
 use goose::acp::server::AcpProviderFactory;
+use goose::conversation::message::Message;
 use goose::model::ModelConfig;
-use goose::providers::base::{MessageStream, Provider};
+use goose::providers::base::{
+    stream_from_single_message, MessageStream, Provider, ProviderUsage, Usage,
+};
 use goose::providers::errors::ProviderError;
 use goose_test_support::{EnforceSessionId, IgnoreSessionId};
 use std::path::PathBuf;
@@ -727,6 +730,323 @@ fn test_custom_provider_supported_models_lists_raw_provider_models() {
                 "goose-claude-opus-4-8",
                 "raw-databricks-endpoint"
             ]))
+        );
+    });
+}
+
+/// Provider that captures every system prompt it sees, and returns "ok" for
+/// each `stream` call. Useful for asserting what the rehydrated PromptManager
+/// sends after a `goose serve` restart.
+struct CapturingProvider {
+    model_config: ModelConfig,
+    captured: Arc<Mutex<Vec<String>>>,
+}
+
+#[async_trait::async_trait]
+impl Provider for CapturingProvider {
+    fn get_name(&self) -> &str {
+        "capturing"
+    }
+
+    async fn stream(
+        &self,
+        _model_config: &ModelConfig,
+        _session_id: &str,
+        system: &str,
+        _messages: &[Message],
+        _tools: &[rmcp::model::Tool],
+    ) -> Result<MessageStream, ProviderError> {
+        self.captured.lock().unwrap().push(system.to_string());
+        Ok(stream_from_single_message(
+            Message::assistant().with_text("ok"),
+            ProviderUsage::new(self.model_config.model_name.clone(), Usage::default()),
+        ))
+    }
+
+    fn get_model_config(&self) -> ModelConfig {
+        self.model_config.clone()
+    }
+}
+
+fn capturing_provider_factory(captured: Arc<Mutex<Vec<String>>>) -> AcpProviderFactory {
+    Arc::new(
+        move |_provider_name, model_config, _extensions, _working_dir| {
+            let captured = captured.clone();
+            Box::pin(async move {
+                Ok(Arc::new(CapturingProvider {
+                    model_config,
+                    captured,
+                }) as Arc<dyn Provider>)
+            })
+        },
+    )
+}
+
+async fn send_set_system_prompt(
+    cx: &agent_client_protocol::ConnectionTo<agent_client_protocol::Agent>,
+    session_id: &str,
+    mode: &str,
+    key: Option<&str>,
+    text: &str,
+) {
+    let mut params = serde_json::json!({
+        "sessionId": session_id,
+        "mode": mode,
+        "text": text,
+    });
+    if let Some(k) = key {
+        params["key"] = serde_json::json!(k);
+    }
+    send_custom(cx, "_goose/unstable/session/system-prompt/set", params)
+        .await
+        .expect("set session system prompt should succeed");
+}
+
+async fn read_persisted_client_system_prompt(
+    data_root: &std::path::Path,
+    session_id: &str,
+) -> Option<String> {
+    let db_path = data_root.join("sessions").join("sessions.db");
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .connect(&format!("sqlite:{}?mode=ro", db_path.display()))
+        .await
+        .unwrap();
+    sqlx::query_scalar::<_, Option<String>>(
+        "SELECT client_system_prompt_json FROM sessions WHERE id = ?",
+    )
+    .bind(session_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap()
+}
+
+#[test]
+fn test_client_system_prompt_persists_across_restart() {
+    run_test(async move {
+        let data_root = tempfile::tempdir().unwrap();
+        let captured = Arc::new(Mutex::new(Vec::<String>::new()));
+
+        // First connection: register the persona, then drop the connection to
+        // simulate a `goose serve` restart.
+        let session_id = {
+            let openai =
+                common_tests::fixtures::OpenAiFixture::new(vec![], Arc::new(IgnoreSessionId)).await;
+            let mut conn = AcpServerConnection::new(
+                TestConnectionConfig {
+                    data_root: data_root.path().to_path_buf(),
+                    provider_factory: Some(capturing_provider_factory(captured.clone())),
+                    ..Default::default()
+                },
+                openai,
+            )
+            .await;
+
+            let SessionData { session, .. } = conn.new_session().await.unwrap();
+            let session_id = session.session_id().0.to_string();
+
+            send_set_system_prompt(
+                conn.cx(),
+                &session_id,
+                "append",
+                Some("client_system_prompt"),
+                "You are Persona A",
+            )
+            .await;
+
+            let persisted =
+                read_persisted_client_system_prompt(data_root.path(), &session_id).await;
+            assert!(
+                persisted
+                    .as_deref()
+                    .is_some_and(|p| p.contains("You are Persona A")),
+                "expected persona to be persisted, got: {persisted:?}",
+            );
+
+            session_id
+        };
+
+        // Second connection: reopen against the same data dir, load the
+        // session, send a prompt, and verify the captured system prompt
+        // contains the persona we set before the "restart".
+        let openai =
+            common_tests::fixtures::OpenAiFixture::new(vec![], Arc::new(IgnoreSessionId)).await;
+        let mut conn = AcpServerConnection::new(
+            TestConnectionConfig {
+                data_root: data_root.path().to_path_buf(),
+                provider_factory: Some(capturing_provider_factory(captured.clone())),
+                ..Default::default()
+            },
+            openai,
+        )
+        .await;
+
+        let SessionData {
+            session: mut loaded,
+            ..
+        } = conn.load_session(&session_id, vec![]).await.unwrap();
+
+        captured.lock().unwrap().clear();
+        let _ = loaded
+            .prompt("hello", PermissionDecision::Cancel)
+            .await
+            .expect("prompt should succeed after restart");
+
+        let prompts = captured.lock().unwrap().clone();
+        assert!(
+            prompts.iter().any(|p| p.contains("You are Persona A")),
+            "expected rehydrated system prompt to contain persona, got: {prompts:?}",
+        );
+    });
+}
+
+#[test]
+fn test_client_system_prompt_allowlist_excludes_recipe() {
+    run_test(async move {
+        let data_root = tempfile::tempdir().unwrap();
+        let captured = Arc::new(Mutex::new(Vec::<String>::new()));
+
+        let session_id = {
+            let openai =
+                common_tests::fixtures::OpenAiFixture::new(vec![], Arc::new(IgnoreSessionId)).await;
+            let mut conn = AcpServerConnection::new(
+                TestConnectionConfig {
+                    data_root: data_root.path().to_path_buf(),
+                    provider_factory: Some(capturing_provider_factory(captured.clone())),
+                    ..Default::default()
+                },
+                openai,
+            )
+            .await;
+
+            let SessionData { session, .. } = conn.new_session().await.unwrap();
+            let session_id = session.session_id().0.to_string();
+
+            send_set_system_prompt(
+                conn.cx(),
+                &session_id,
+                "append",
+                Some("recipe"),
+                "should not persist",
+            )
+            .await;
+
+            // Server-managed keys are not persisted, even though the
+            // in-memory PromptManager mutation succeeds.
+            let persisted =
+                read_persisted_client_system_prompt(data_root.path(), &session_id).await;
+            assert!(
+                persisted.is_none(),
+                "recipe key must not be persisted; got: {persisted:?}",
+            );
+
+            session_id
+        };
+
+        let openai =
+            common_tests::fixtures::OpenAiFixture::new(vec![], Arc::new(IgnoreSessionId)).await;
+        let mut conn = AcpServerConnection::new(
+            TestConnectionConfig {
+                data_root: data_root.path().to_path_buf(),
+                provider_factory: Some(capturing_provider_factory(captured.clone())),
+                ..Default::default()
+            },
+            openai,
+        )
+        .await;
+
+        let SessionData {
+            session: mut loaded,
+            ..
+        } = conn.load_session(&session_id, vec![]).await.unwrap();
+
+        captured.lock().unwrap().clear();
+        let _ = loaded
+            .prompt("hello", PermissionDecision::Cancel)
+            .await
+            .expect("prompt should succeed after restart");
+
+        let prompts = captured.lock().unwrap().clone();
+        assert!(
+            !prompts.iter().any(|p| p.contains("should not persist")),
+            "recipe key must not be rehydrated; got: {prompts:?}",
+        );
+    });
+}
+
+#[test]
+fn test_client_system_prompt_override_clear() {
+    run_test(async move {
+        let data_root = tempfile::tempdir().unwrap();
+        let captured = Arc::new(Mutex::new(Vec::<String>::new()));
+
+        let session_id = {
+            let openai =
+                common_tests::fixtures::OpenAiFixture::new(vec![], Arc::new(IgnoreSessionId)).await;
+            let mut conn = AcpServerConnection::new(
+                TestConnectionConfig {
+                    data_root: data_root.path().to_path_buf(),
+                    provider_factory: Some(capturing_provider_factory(captured.clone())),
+                    ..Default::default()
+                },
+                openai,
+            )
+            .await;
+
+            let SessionData { session, .. } = conn.new_session().await.unwrap();
+            let session_id = session.session_id().0.to_string();
+
+            send_set_system_prompt(conn.cx(), &session_id, "set", None, "X").await;
+            let persisted_after_set =
+                read_persisted_client_system_prompt(data_root.path(), &session_id).await;
+            assert!(
+                persisted_after_set
+                    .as_deref()
+                    .is_some_and(|p| p.contains("\"X\"")),
+                "expected override to be persisted, got: {persisted_after_set:?}",
+            );
+
+            // Clearing the override should drop the entire row to NULL since
+            // there are no other client-authored extras.
+            send_set_system_prompt(conn.cx(), &session_id, "set", None, "").await;
+            let persisted_after_clear =
+                read_persisted_client_system_prompt(data_root.path(), &session_id).await;
+            assert!(
+                persisted_after_clear.is_none(),
+                "expected override to be cleared, got: {persisted_after_clear:?}",
+            );
+
+            session_id
+        };
+
+        let openai =
+            common_tests::fixtures::OpenAiFixture::new(vec![], Arc::new(IgnoreSessionId)).await;
+        let mut conn = AcpServerConnection::new(
+            TestConnectionConfig {
+                data_root: data_root.path().to_path_buf(),
+                provider_factory: Some(capturing_provider_factory(captured.clone())),
+                ..Default::default()
+            },
+            openai,
+        )
+        .await;
+
+        let SessionData {
+            session: mut loaded,
+            ..
+        } = conn.load_session(&session_id, vec![]).await.unwrap();
+
+        captured.lock().unwrap().clear();
+        let _ = loaded
+            .prompt("hello", PermissionDecision::Cancel)
+            .await
+            .expect("prompt should succeed after restart");
+
+        let prompts = captured.lock().unwrap().clone();
+        assert!(
+            prompts
+                .iter()
+                .all(|p| !p.starts_with("X") && !p.trim_start().starts_with("X\n")),
+            "cleared override must not be rehydrated as system prompt: {prompts:?}",
         );
     });
 }

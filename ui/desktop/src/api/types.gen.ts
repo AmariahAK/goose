@@ -81,6 +81,21 @@ export type ChatTemplate = {
     type: 'custom_inline';
 };
 
+/**
+ * Client-authored system prompt state persisted with a session.
+ *
+ * Populated via the ACP `_goose/unstable/session/system-prompt/set` method.
+ * `override_text` mirrors `PromptManager::system_prompt_override` (Set mode);
+ * `extras` mirrors a filtered subset of `PromptManager::system_prompt_extras`
+ * (Append mode, only keys whose persistence is allow-listed at the handler).
+ */
+export type ClientSystemPrompt = {
+    extras?: {
+        [key: string]: string;
+    };
+    overrideText?: string | null;
+};
+
 export type CheckProviderRequest = {
     provider: string;
 };
@@ -1288,6 +1303,7 @@ export type Session = {
     accumulated_output_tokens?: number | null;
     accumulated_total_tokens?: number | null;
     archived_at?: string | null;
+    client_system_prompt?: ClientSystemPrompt | null;
     conversation?: Conversation | null;
     created_at: string;
     extension_data: ExtensionData;

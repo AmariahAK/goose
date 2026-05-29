@@ -124,6 +124,13 @@ pub enum SessionSystemPromptMode {
 /// `mode: "set"` replaces Goose's base system prompt. `mode: "append"` adds an
 /// instruction under "Additional Instructions". Reusing a key replaces the
 /// previous value for that mode/key; sending empty text clears it.
+///
+/// Persistence: values set with `mode = Set`, or with `mode = Append` and a
+/// `key` starting with `client_`, are persisted to the session record and
+/// rehydrated when the session is loaded. Other `Append` keys (e.g. `recipe`,
+/// `final_output`, `additional`, `hints_*`) are server-managed and only mutate
+/// the in-memory PromptManager for the current process; they're rebuilt from
+/// session state on the next agent spawn.
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
 #[request(
     method = "_goose/unstable/session/system-prompt/set",
