@@ -432,7 +432,39 @@ impl ModelConfig {
             return tokens;
         }
 
+        // Claude 4.x and newer all support at least 32k output tokens. The
+        // canonical model table is the source of truth, but when a fresh
+        // model id (e.g. a just-released `claude-opus-4-N`) is not yet in the
+        // shipped table we still don't want to silently cap responses at 4096
+        // — that truncates tool calls mid-stream and looks like the model is
+        // "broken". Use a Claude-family floor that matches the lowest 4.x
+        // output cap so behaviour degrades gracefully instead of catastrophically.
+        if Self::is_claude_4_or_newer(&self.model_name) {
+            return 32_000;
+        }
+
         4_096
+    }
+
+    fn is_claude_4_or_newer(model_name: &str) -> bool {
+        let lower = model_name.to_lowercase();
+        if !lower.contains("claude") {
+            return false;
+        }
+        // Match `claude-<family>-<major>` where major >= 4. Covers ids like
+        // `claude-opus-4-8`, `claude-sonnet-4-5`, `anthropic/claude-opus-4.6`,
+        // `databricks-claude-opus-4.5`, etc. Older Claude 3.x / 2.x ids keep
+        // the conservative 4096 default since their real output caps are
+        // genuinely small (3.x sonnet = 8192, 3.x opus = 4096).
+        static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+        let re = RE.get_or_init(|| {
+            regex::Regex::new(r"claude[-/](?:opus|sonnet|haiku)[-.]?(\d+)").unwrap()
+        });
+        re.captures(&lower)
+            .and_then(|c| c.get(1))
+            .and_then(|m| m.as_str().parse::<u32>().ok())
+            .map(|major| major >= 4)
+            .unwrap_or(false)
     }
 
     pub fn normalize_effort_suffix(&mut self) {
@@ -573,6 +605,113 @@ mod tests {
         let result = ModelConfig::parse_max_tokens();
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), ConfigError::InvalidRange(..)));
+    }
+
+    #[test]
+    fn claude_4_family_falls_back_to_32k_not_4096() {
+        // Unknown Claude 4+ ids (not yet in the canonical table) must not
+        // silently truncate at 4096 — that breaks tool-calling mid-response.
+        for model in [
+            "claude-opus-4-8",
+            "claude-opus-4-9",
+            "claude-sonnet-4-7",
+            "claude-haiku-4-2",
+            "anthropic/claude-opus-4.8",
+            "databricks-claude-opus-4.6",
+        ] {
+            let cfg = ModelConfig {
+                model_name: model.to_string(),
+                context_limit: None,
+                temperature: None,
+                max_tokens: None,
+                toolshim: false,
+                toolshim_model: None,
+                fast_model_config: None,
+                request_params: None,
+                reasoning: None,
+            };
+            assert_eq!(
+                cfg.max_output_tokens(),
+                32_000,
+                "expected 32k floor for Claude 4+ id `{model}`"
+            );
+        }
+    }
+
+    #[test]
+    fn claude_3_and_non_claude_keep_4096_default() {
+        // Older Claude 3.x and non-Claude models should keep the conservative
+        // 4096 default — their real output caps are genuinely small or unknown.
+        for model in [
+            "claude-3-opus-20240229",
+            "claude-3-5-sonnet-20241022",
+            "gpt-4o",
+            "some-unknown-model",
+        ] {
+            let cfg = ModelConfig {
+                model_name: model.to_string(),
+                context_limit: None,
+                temperature: None,
+                max_tokens: None,
+                toolshim: false,
+                toolshim_model: None,
+                fast_model_config: None,
+                request_params: None,
+                reasoning: None,
+            };
+            assert_eq!(
+                cfg.max_output_tokens(),
+                4_096,
+                "expected 4096 default for non-Claude-4 id `{model}`"
+            );
+        }
+    }
+
+    #[test]
+    fn canonical_lookup_resolves_dash_to_dot_for_claude_4_x() {
+        // The canonical registry stores Anthropic ids with dots
+        // (`anthropic/claude-opus-4.8`) but `GOOSE_MODEL` is set with dashes
+        // (`claude-opus-4-8`). The shared `strip_version_suffix` normalizer
+        // already converts `-N-M` → `-N.M`, so the lookup should succeed and
+        // populate real limits from the table — no 4096 fallback.
+        let _guard = env_lock::lock_env([
+            ("GOOSE_MAX_TOKENS", None::<&str>),
+            ("GOOSE_CONTEXT_LIMIT", None::<&str>),
+        ]);
+        for (model, expected_min_output) in [
+            ("claude-opus-4-1", 32_000),
+            ("claude-opus-4-5", 64_000),
+            ("claude-opus-4-6", 128_000),
+            ("claude-opus-4-7", 128_000),
+            ("claude-opus-4-8", 128_000),
+        ] {
+            let cfg = ModelConfig::new_or_fail(model).with_canonical_limits("anthropic");
+            assert!(
+                cfg.max_output_tokens() >= expected_min_output,
+                "{model}: expected canonical lookup to yield >= {expected_min_output} output tokens, got {}",
+                cfg.max_output_tokens()
+            );
+            assert!(
+                cfg.max_output_tokens() > 4_096,
+                "{model}: canonical lookup should have raised cap above 4096 fallback"
+            );
+        }
+    }
+
+    #[test]
+    fn explicit_max_tokens_always_wins() {
+        let cfg = ModelConfig {
+            model_name: "claude-opus-4-8".to_string(),
+            context_limit: None,
+            temperature: None,
+            max_tokens: Some(8_192),
+            toolshim: false,
+            toolshim_model: None,
+            fast_model_config: None,
+            request_params: None,
+            reasoning: None,
+        };
+        assert_eq!(cfg.max_output_tokens(), 8_192);
     }
 
     #[test]
@@ -877,8 +1016,16 @@ mod tests {
             ]);
             let config = ModelConfig::new_or_fail("gpt-4o").with_canonical_limits("openai");
 
+            // Values come from the bundled canonical models registry (synced
+            // from models.dev). We assert the *shape* (limits got filled in,
+            // context matches the well-known 128k cap, reasoning is false)
+            // rather than an exact `max_tokens` number so this test doesn't
+            // break every time models.dev updates gpt-4o's output cap.
             assert_eq!(config.context_limit, Some(128_000));
-            assert_eq!(config.max_tokens, Some(16_384));
+            assert!(
+                config.max_tokens.is_some(),
+                "expected canonical lookup to populate max_tokens for gpt-4o"
+            );
             assert_eq!(config.reasoning, Some(false));
         }
 
