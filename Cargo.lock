@@ -4768,11 +4768,13 @@ dependencies = [
 name = "goose-types"
 version = "1.36.0"
 dependencies = [
+ "anyhow",
  "base64 0.22.1",
  "chrono",
  "env-lock",
  "goose-models-db",
  "regex",
+ "reqwest 0.13.4",
  "rmcp",
  "serde",
  "serde_json",
