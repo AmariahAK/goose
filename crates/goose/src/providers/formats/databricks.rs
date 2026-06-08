@@ -1,6 +1,6 @@
 use crate::conversation::message::{Message, MessageContent};
 use crate::model::ModelConfig;
-use crate::providers::formats::anthropic::{
+use goose_providers::formats::anthropic::{
     thinking_budget_tokens, thinking_effort, thinking_type, ThinkingType,
 };
 
@@ -246,12 +246,12 @@ fn format_messages(messages: &[Message], image_format: &ImageFormat) -> Vec<Data
 fn apply_claude_thinking_config(payload: &mut Value, model_config: &ModelConfig) {
     let obj = payload.as_object_mut().unwrap();
 
-    match thinking_type(model_config) {
+    match thinking_type(&model_config.as_config_params()) {
         ThinkingType::Adaptive => {
             obj.insert("thinking".to_string(), json!({ "type": "adaptive" }));
             obj.insert(
                 "output_config".to_string(),
-                json!({ "effort": thinking_effort(model_config).to_string() }),
+                json!({ "effort": thinking_effort(&model_config.as_config_params()).to_string() }),
             );
             obj.insert(
                 "max_completion_tokens".to_string(),
@@ -259,7 +259,7 @@ fn apply_claude_thinking_config(payload: &mut Value, model_config: &ModelConfig)
             );
         }
         ThinkingType::Enabled => {
-            let budget_tokens = thinking_budget_tokens(model_config);
+            let budget_tokens = thinking_budget_tokens(&model_config.as_config_params());
             let max_tokens = model_config.max_output_tokens() + budget_tokens;
             obj.insert("max_tokens".to_string(), json!(max_tokens));
             obj.insert(

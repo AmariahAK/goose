@@ -1,11 +1,11 @@
 use crate::conversation::message::{Message, MessageContent};
+use crate::conversation::token_usage::{ProviderUsage, Usage};
+use crate::errors::ProviderError;
+use crate::images::{convert_image, ImageFormat};
 use crate::mcp_utils::extract_text_from_resource;
-use crate::model::ModelConfig;
+use crate::models::ModelConfigParams;
+use crate::thinking::ThinkingEffort;
 use anyhow::{anyhow, Result};
-use goose_providers::conversation::token_usage::{ProviderUsage, Usage};
-use goose_providers::errors::ProviderError;
-use goose_providers::images::{convert_image, ImageFormat};
-use goose_providers::thinking::ThinkingEffort;
 use rmcp::model::{object, CallToolRequestParams, ErrorCode, ErrorData, JsonObject, Role, Tool};
 use rmcp::object as json_object;
 use serde_json::{json, Value};
@@ -45,46 +45,19 @@ pub struct AnthropicFormatOptions {
     pub preserve_thinking_context: bool,
 }
 
-impl AnthropicFormatOptions {
-    fn for_model(self, model_config: &ModelConfig) -> Self {
-        let preserve_thinking_context = model_config
-            .get_config_param::<bool>(
-                "preserve_thinking_context",
-                "ANTHROPIC_PRESERVE_THINKING_CONTEXT",
-            )
-            .unwrap_or(self.preserve_thinking_context);
-        let preserve_unsigned_thinking = model_config
-            .get_config_param::<bool>(
-                "preserve_unsigned_thinking",
-                "ANTHROPIC_PRESERVE_UNSIGNED_THINKING",
-            )
-            .unwrap_or(self.preserve_unsigned_thinking)
-            || preserve_thinking_context;
-
-        Self {
-            preserve_unsigned_thinking,
-            preserve_thinking_context,
-        }
-    }
-}
-
 pub fn supports_adaptive_thinking(model_name: &str) -> bool {
     let lower = model_name.to_lowercase();
     lower.contains("claude-opus-4-6") || lower.contains("claude-sonnet-4-6")
 }
 
-pub fn thinking_type(model_config: &ModelConfig) -> ThinkingType {
+pub fn thinking_type(model_config: &ModelConfigParams) -> ThinkingType {
     let model_lower = model_config.model_name.to_lowercase();
     if !model_lower.contains("claude") {
         return ThinkingType::Disabled;
     }
 
     let is_adaptive_model = supports_adaptive_thinking(&model_config.model_name);
-    let effort = model_config.thinking_effort();
-
-    if effort.is_none() && legacy_thinking_budget_tokens().is_some() {
-        return ThinkingType::Enabled;
-    }
+    let effort = model_config.thinking_effort;
 
     match effort.unwrap_or(ThinkingEffort::Off) {
         ThinkingEffort::Off => ThinkingType::Disabled,
@@ -507,13 +480,11 @@ pub fn get_usage(data: &Value) -> Result<Usage> {
     }
 }
 
-pub fn thinking_effort(model_config: &ModelConfig) -> ThinkingEffort {
-    model_config
-        .thinking_effort()
-        .unwrap_or(ThinkingEffort::High)
+pub fn thinking_effort(model_config: &ModelConfigParams) -> ThinkingEffort {
+    model_config.thinking_effort.unwrap_or(ThinkingEffort::High)
 }
 
-pub fn thinking_budget_tokens(model_config: &ModelConfig) -> i32 {
+pub fn thinking_budget_tokens(model_config: &ModelConfigParams) -> i32 {
     if let Some(request_param) = model_config
         .request_params
         .as_ref()
@@ -523,13 +494,7 @@ pub fn thinking_budget_tokens(model_config: &ModelConfig) -> i32 {
         return request_param.max(1024);
     }
 
-    if let Some(budget) = legacy_thinking_budget_tokens() {
-        return budget;
-    }
-
-    let effort = model_config
-        .thinking_effort()
-        .unwrap_or(ThinkingEffort::High);
+    let effort = model_config.thinking_effort.unwrap_or(ThinkingEffort::High);
     match effort {
         ThinkingEffort::Off => 1024,
         ThinkingEffort::Low => 4000,
@@ -539,19 +504,9 @@ pub fn thinking_budget_tokens(model_config: &ModelConfig) -> i32 {
     }
 }
 
-fn legacy_thinking_budget_tokens() -> Option<i32> {
-    let config = crate::config::Config::global();
-    for key in ["ANTHROPIC_THINKING_BUDGET", "CLAUDE_THINKING_BUDGET"] {
-        if let Ok(budget) = config.get_param::<i32>(key) {
-            return Some(budget.max(1024));
-        }
-    }
-    None
-}
-
 fn apply_thinking_config(
     payload: &mut Value,
-    model_config: &ModelConfig,
+    model_config: &ModelConfigParams,
     max_tokens: i32,
     options: AnthropicFormatOptions,
 ) {
@@ -598,7 +553,7 @@ fn apply_thinking_config(
 
 /// Create a complete request payload for Anthropic's API
 pub fn create_request(
-    model_config: &ModelConfig,
+    model_config: &ModelConfigParams,
     system: &str,
     messages: &[Message],
     tools: &[Tool],
@@ -613,13 +568,12 @@ pub fn create_request(
 }
 
 pub fn create_request_with_options(
-    model_config: &ModelConfig,
+    model_config: &ModelConfigParams,
     system: &str,
     messages: &[Message],
     tools: &[Tool],
     options: AnthropicFormatOptions,
 ) -> Result<Value> {
-    let options = options.for_model(model_config);
     let anthropic_messages = format_messages_with_options(messages, options);
     let tool_specs = format_tools(tools);
     let system_spec = format_system(system);
@@ -921,9 +875,10 @@ where
 mod tests {
     use super::*;
     use crate::conversation::message::Message;
-    use crate::model::ModelConfig;
+    use crate::models::ModelConfigParams;
     use rmcp::object;
     use serde_json::json;
+    use std::collections::HashMap;
 
     #[test]
     fn test_parse_text_response() -> Result<()> {
@@ -1186,12 +1141,12 @@ mod tests {
     fn test_create_request_adaptive_thinking_for_46_models() -> Result<()> {
         let _guard = env_lock::lock_env([("GOOSE_THINKING_EFFORT", None::<&str>)]);
 
-        let mut params = std::collections::HashMap::new();
+        let mut params = HashMap::new();
         params.insert("thinking_effort".to_string(), json!("high"));
 
         let mut config = cfg("claude-opus-4-6");
         config.max_tokens = Some(4096);
-        config.request_params = Some(params);
+        config.request_params = Some(&params);
         let messages = vec![Message::user().with_text("Hello")];
         let payload = create_request(&config, "system", &messages, &[])?;
 
@@ -1209,7 +1164,8 @@ mod tests {
             ("ANTHROPIC_PRESERVE_THINKING_CONTEXT", None::<&str>),
         ]);
 
-        let mut config = cfg_with_effort("claude-3-7-sonnet-20250219", "high");
+        let params = effort_params("high");
+        let mut config = cfg_with_params("claude-3-7-sonnet-20250219", &params);
         config.max_tokens = Some(4096);
 
         let messages = vec![Message::user().with_text("Hello")];
@@ -1230,7 +1186,8 @@ mod tests {
             ("ANTHROPIC_PRESERVE_THINKING_CONTEXT", None::<&str>),
         ]);
 
-        let config = cfg_with_effort("claude-sonnet-4-20250514", "off");
+        let params = effort_params("off");
+        let config = cfg_with_params("claude-sonnet-4-20250514", &params);
         let messages = vec![Message::user().with_text("Hello")];
         let payload = create_request(&config, "system", &messages, &[])?;
 
@@ -1297,7 +1254,7 @@ mod tests {
         params.insert("preserve_thinking_context".to_string(), json!(true));
 
         let mut config = cfg("glm-4.7");
-        config.request_params = Some(params);
+        config.request_params = Some(&params);
         let messages = vec![
             Message::assistant().with_content(MessageContent::thinking("internal", "")),
             Message::user().with_text("Continue"),
@@ -1490,18 +1447,25 @@ mod tests {
         assert_eq!(input, &json!({}));
     }
 
-    fn cfg(name: &str) -> ModelConfig {
-        ModelConfig {
-            model_name: name.to_string(),
+    fn cfg<'a>(name: &'a str) -> ModelConfigParams<'a> {
+        ModelConfigParams {
+            model_name: name,
             ..Default::default()
         }
     }
 
-    fn cfg_with_effort(name: &str, effort: &str) -> ModelConfig {
+    fn effort_params(effort: &str) -> HashMap<String, Value> {
         let mut params = std::collections::HashMap::new();
         params.insert("thinking_effort".to_string(), json!(effort));
-        ModelConfig {
-            model_name: name.to_string(),
+        params
+    }
+
+    fn cfg_with_params<'a>(
+        name: &'a str,
+        params: &'a HashMap<String, Value>,
+    ) -> ModelConfigParams<'a> {
+        ModelConfigParams {
+            model_name: name,
             request_params: Some(params),
             ..Default::default()
         }
@@ -1512,22 +1476,28 @@ mod tests {
         let _guard = env_lock::lock_env([("GOOSE_THINKING_EFFORT", None::<&str>)]);
         // Adaptive model with effort → adaptive
         assert_eq!(
-            thinking_type(&cfg_with_effort("claude-opus-4-6", "high")),
+            thinking_type(&cfg_with_params("claude-opus-4-6", &effort_params("high"))),
             ThinkingType::Adaptive
         );
         // Adaptive model with off → disabled
         assert_eq!(
-            thinking_type(&cfg_with_effort("claude-opus-4-6", "off")),
+            thinking_type(&cfg_with_params("claude-opus-4-6", &effort_params("off"))),
             ThinkingType::Disabled
         );
         // Non-adaptive Claude with effort → enabled
         assert_eq!(
-            thinking_type(&cfg_with_effort("claude-3-7-sonnet-20250219", "high")),
+            thinking_type(&cfg_with_params(
+                "claude-3-7-sonnet-20250219",
+                &effort_params("high")
+            )),
             ThinkingType::Enabled
         );
         // Non-adaptive Claude with off → disabled
         assert_eq!(
-            thinking_type(&cfg_with_effort("claude-3-7-sonnet-20250219", "off")),
+            thinking_type(&cfg_with_params(
+                "claude-3-7-sonnet-20250219",
+                &effort_params("off")
+            )),
             ThinkingType::Disabled
         );
     }
@@ -1539,18 +1509,23 @@ mod tests {
             ("ANTHROPIC_THINKING_BUDGET", Some("8192")),
             ("CLAUDE_THINKING_BUDGET", None::<&str>),
         ]);
-        let config = cfg_with_effort("claude-3-7-sonnet-20250219", "high");
-        assert_eq!(thinking_budget_tokens(&config), 8192);
+        assert_eq!(
+            thinking_budget_tokens(&cfg_with_params(
+                "claude-3-7-sonnet-20250219",
+                &effort_params("high")
+            )),
+            8192
+        );
     }
 
     #[test]
     fn test_thinking_type_non_claude_always_disabled() {
         assert_eq!(
-            thinking_type(&cfg_with_effort("gpt-4o", "off")),
+            thinking_type(&cfg_with_params("gpt-4o", &effort_params("off"))),
             ThinkingType::Disabled
         );
         assert_eq!(
-            thinking_type(&cfg_with_effort("gpt-4o", "high")),
+            thinking_type(&cfg_with_params("gpt-4o", &effort_params("high"))),
             ThinkingType::Disabled
         );
     }
@@ -1558,11 +1533,14 @@ mod tests {
     #[test]
     fn test_thinking_type_off_means_disabled() {
         assert_eq!(
-            thinking_type(&cfg_with_effort("claude-opus-4-6", "off")),
+            thinking_type(&cfg_with_params("claude-opus-4-6", &effort_params("off"))),
             ThinkingType::Disabled
         );
         assert_eq!(
-            thinking_type(&cfg_with_effort("claude-3-7-sonnet-20250219", "off")),
+            thinking_type(&cfg_with_params(
+                "claude-3-7-sonnet-20250219",
+                &effort_params("off")
+            )),
             ThinkingType::Disabled
         );
     }

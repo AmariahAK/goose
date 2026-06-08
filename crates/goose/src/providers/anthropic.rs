@@ -11,10 +11,6 @@ use tokio_util::io::StreamReader;
 
 use super::api_client::{ApiClient, AuthMethod};
 use super::base::{ConfigKey, MessageStream, ModelInfo, Provider, ProviderDef, ProviderMetadata};
-use super::formats::anthropic::{
-    create_request_with_options, response_to_streaming_message, thinking_type,
-    AnthropicFormatOptions, ThinkingType,
-};
 use super::inventory::{config_secret_value, serialize_string_map, InventoryIdentityInput};
 use super::openai_compatible::handle_status;
 use super::openai_compatible::map_http_error_to_provider_error;
@@ -24,6 +20,9 @@ use crate::conversation::message::Message;
 use crate::model::ModelConfig;
 use crate::providers::utils::RequestLog;
 use futures::future::BoxFuture;
+use goose_providers::formats::anthropic::{
+    create_request_with_options, response_to_streaming_message, AnthropicFormatOptions,
+};
 use rmcp::model::Tool;
 
 const ANTHROPIC_PROVIDER_NAME: &str = "anthropic";
@@ -177,19 +176,6 @@ impl AnthropicProvider {
         }
     }
 
-    fn get_conditional_headers(&self) -> Vec<(&str, &str)> {
-        let mut headers = Vec::new();
-
-        if self.model.model_name.starts_with("claude-3-7-sonnet-") {
-            if thinking_type(&self.model) == ThinkingType::Enabled {
-                headers.push(("anthropic-beta", "output-128k-2025-02-19"));
-            }
-            headers.push(("anthropic-beta", "token-efficient-tools-2025-02-19"));
-        }
-
-        headers
-    }
-
     async fn fetch_models_from_api(&self) -> Result<Vec<String>, ProviderError> {
         let response = self.api_client.request(None, "v1/models").api_get().await?;
 
@@ -225,6 +211,27 @@ impl AnthropicProvider {
             .collect();
         models.sort();
         Ok(models)
+    }
+
+    fn format_options(&self, model_config: &ModelConfig) -> AnthropicFormatOptions {
+        let preserve_thinking_context = model_config
+            .get_config_param::<bool>(
+                "preserve_thinking_context",
+                "ANTHROPIC_PRESERVE_THINKING_CONTEXT",
+            )
+            .unwrap_or(self.format_options.preserve_thinking_context);
+        let preserve_unsigned_thinking = model_config
+            .get_config_param::<bool>(
+                "preserve_unsigned_thinking",
+                "ANTHROPIC_PRESERVE_UNSIGNED_THINKING",
+            )
+            .unwrap_or(self.format_options.preserve_unsigned_thinking)
+            || preserve_thinking_context;
+
+        AnthropicFormatOptions {
+            preserve_unsigned_thinking,
+            preserve_thinking_context,
+        }
     }
 }
 
@@ -342,26 +349,22 @@ impl Provider for AnthropicProvider {
         tools: &[Tool],
     ) -> Result<MessageStream, ProviderError> {
         let mut payload = create_request_with_options(
-            model_config,
+            &model_config.as_config_params(),
             system,
             messages,
             tools,
-            self.format_options,
+            self.format_options(model_config),
         )?;
         payload
             .as_object_mut()
             .unwrap()
             .insert("stream".to_string(), Value::Bool(true));
 
-        let conditional_headers = self.get_conditional_headers();
         let mut log = RequestLog::start(model_config, &payload)?;
 
         let response = self
             .with_retry(|| async {
-                let mut request = self.api_client.request(Some(session_id), "v1/messages");
-                for (key, value) in &conditional_headers {
-                    request = request.header(key, value)?;
-                }
+                let request = self.api_client.request(Some(session_id), "v1/messages");
                 let resp = request.response_post(&payload).await?;
                 handle_status(resp).await
             })

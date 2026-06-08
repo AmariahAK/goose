@@ -1,8 +1,9 @@
-use super::{anthropic, google};
+use super::google;
 use crate::conversation::message::Message;
 use crate::model::ModelConfig;
 use anyhow::{Context, Result};
 use goose_providers::conversation::token_usage::{ProviderUsage, Usage};
+use goose_providers::formats::anthropic;
 use rmcp::model::Tool;
 use serde_json::Value;
 
@@ -220,7 +221,8 @@ fn create_anthropic_request(
     messages: &[Message],
     tools: &[Tool],
 ) -> Result<Value> {
-    let mut request = anthropic::create_request(model_config, system, messages, tools)?;
+    let mut request =
+        anthropic::create_request(&model_config.as_config_params(), system, messages, tools)?;
 
     let obj = request
         .as_object_mut()

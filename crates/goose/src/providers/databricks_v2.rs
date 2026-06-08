@@ -20,7 +20,7 @@ use super::base::{
     DEFAULT_PROVIDER_TIMEOUT_SECS,
 };
 use super::databricks_auth::{DatabricksAuth, DatabricksAuthProvider};
-use super::formats::{anthropic, openai_responses};
+use super::formats::openai_responses;
 use super::openai_compatible::{handle_status, stream_openai_compat, stream_responses_compat};
 use super::retry::ProviderRetry;
 use super::utils::RequestLog;
@@ -32,6 +32,7 @@ use crate::providers::retry::{
     DEFAULT_MAX_RETRIES, DEFAULT_MAX_RETRY_INTERVAL_MS,
 };
 use goose_providers::errors::ProviderError;
+use goose_providers::formats::anthropic;
 use rmcp::model::Tool;
 
 const DATABRICKS_V2_PROVIDER_NAME: &str = "databricks_v2";
@@ -296,7 +297,8 @@ impl DatabricksV2Provider {
         messages: &[Message],
         tools: &[Tool],
     ) -> Result<MessageStream, ProviderError> {
-        let mut payload = anthropic::create_request(model_config, system, messages, tools)?;
+        let mut payload =
+            anthropic::create_request(&model_config.as_config_params(), system, messages, tools)?;
         payload["stream"] = Value::Bool(true);
         let mut log = RequestLog::start(model_config, &payload)?;
 

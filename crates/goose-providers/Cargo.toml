@@ -30,6 +30,7 @@ utoipa = { workspace = true, features = ["chrono"] }
 uuid = { workspace = true, features = ["v4", "std"] }
 
 [dev-dependencies]
+env-lock = { workspace = true }
 test-case = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true }

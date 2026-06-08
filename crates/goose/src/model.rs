@@ -1,4 +1,5 @@
 use goose_providers::formats::openai::{extract_reasoning_effort, is_openai_responses_model};
+use goose_providers::models::ModelConfigParams;
 use goose_providers::thinking::ThinkingEffort;
 use once_cell::sync::Lazy;
 use serde::de::Deserializer;
@@ -493,6 +494,16 @@ impl ModelConfig {
     pub fn new_or_fail(model_name: &str) -> ModelConfig {
         ModelConfig::new(model_name)
             .unwrap_or_else(|_| panic!("Failed to create model config for {}", model_name))
+    }
+
+    pub fn as_config_params<'a>(&'a self) -> ModelConfigParams<'a> {
+        ModelConfigParams {
+            model_name: self.model_name.as_str(),
+            thinking_effort: self.thinking_effort(),
+            temperature: self.temperature,
+            max_tokens: self.max_tokens,
+            request_params: self.request_params.as_ref(),
+        }
     }
 }
 

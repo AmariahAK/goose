@@ -20,7 +20,6 @@ use super::base::{
     ConfigKey, MessageStream, Provider, ProviderDef, ProviderMetadata,
     DEFAULT_PROVIDER_TIMEOUT_SECS,
 };
-use super::formats::anthropic::{create_request, response_to_streaming_message};
 use super::oauth_device_flow::{
     refresh_device_flow_token, run_device_flow, DeviceFlowConfig, DeviceFlowTokens, RequestEncoding,
 };
@@ -31,6 +30,7 @@ use crate::conversation::message::Message;
 use crate::model::ModelConfig;
 use futures::future::BoxFuture;
 use goose_providers::errors::ProviderError;
+use goose_providers::formats::anthropic::{create_request, response_to_streaming_message};
 use rmcp::model::Tool;
 
 const KIMI_CODE_PROVIDER_NAME: &str = "kimi_code";
@@ -393,7 +393,7 @@ impl Provider for KimiCodeProvider {
         messages: &[Message],
         tools: &[Tool],
     ) -> Result<MessageStream, ProviderError> {
-        let mut payload = create_request(model_config, system, messages, tools)
+        let mut payload = create_request(&model_config.as_config_params(), system, messages, tools)
             .map_err(|e| ProviderError::RequestFailed(e.to_string()))?;
         payload
             .as_object_mut()
