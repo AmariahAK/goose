@@ -1,13 +1,25 @@
 use lru::LruCache;
 use rmcp::model::Tool;
 use std::num::NonZeroUsize;
-use std::sync::{Arc, Mutex};
+#[cfg(feature = "tiktoken")]
+use std::sync::Arc;
+use std::sync::Mutex;
+#[cfg(feature = "tiktoken")]
 use tiktoken_rs::CoreBPE;
+#[cfg(feature = "tiktoken")]
 use tokio::sync::OnceCell;
 
 use crate::conversation::message::Message;
 
+#[cfg(feature = "tiktoken")]
 static TOKENIZER: OnceCell<Arc<CoreBPE>> = OnceCell::const_new();
+
+/// Bytes-per-token divisor for the estimator used when the `tiktoken` feature
+/// is disabled. Real content sits around 3–4.5 bytes/token (code at the low
+/// end), so dividing by 3 gives a mild over-estimate — the safe direction for
+/// context-budget and compaction decisions, which is all TokenCounter feeds.
+#[cfg(not(feature = "tiktoken"))]
+const ESTIMATE_BYTES_PER_TOKEN: usize = 3;
 
 const MAX_TOKEN_CACHE_SIZE: usize = 1_024;
 
@@ -20,6 +32,7 @@ const ENUM_ITEM: usize = 3;
 const FUNC_END: usize = 12;
 
 pub struct TokenCounter {
+    #[cfg(feature = "tiktoken")]
     tokenizer: Arc<CoreBPE>,
     token_cache: Mutex<LruCache<TokenCacheKey, usize>>,
 }
@@ -41,13 +54,27 @@ impl TokenCacheKey {
 
 impl TokenCounter {
     pub async fn new() -> Result<Self, String> {
-        let tokenizer = get_tokenizer().await?;
         let cache_capacity =
             NonZeroUsize::new(MAX_TOKEN_CACHE_SIZE).expect("token cache capacity must be non-zero");
         Ok(Self {
-            tokenizer,
+            #[cfg(feature = "tiktoken")]
+            tokenizer: get_tokenizer().await?,
             token_cache: Mutex::new(LruCache::new(cache_capacity)),
         })
+    }
+
+    /// Tokenize with the BPE tokenizer (`tiktoken` feature), or estimate from
+    /// byte length when built without it (mild over-estimate — see
+    /// `ESTIMATE_BYTES_PER_TOKEN`).
+    fn count_uncached(&self, text: &str) -> usize {
+        #[cfg(feature = "tiktoken")]
+        {
+            self.tokenizer.encode_with_special_tokens(text).len()
+        }
+        #[cfg(not(feature = "tiktoken"))]
+        {
+            text.len().div_ceil(ESTIMATE_BYTES_PER_TOKEN)
+        }
     }
 
     pub fn count_tokens(&self, text: &str) -> usize {
@@ -62,8 +89,7 @@ impl TokenCounter {
             return count;
         }
 
-        let tokens = self.tokenizer.encode_with_special_tokens(text);
-        let count = tokens.len();
+        let count = self.count_uncached(text);
 
         self.token_cache
             .lock()
@@ -202,6 +228,7 @@ impl TokenCounter {
     }
 }
 
+#[cfg(feature = "tiktoken")]
 async fn get_tokenizer() -> Result<Arc<CoreBPE>, String> {
     Ok(TOKENIZER
         .get_or_init(|| async {

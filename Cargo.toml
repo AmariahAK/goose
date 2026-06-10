@@ -123,3 +123,16 @@ cudaforge = { git = "https://github.com/jbg/cudaforge", rev = "e7c1967340e40673d
 # full debug info and stay fully debuggable; release builds are unaffected.
 [profile.dev.package."*"]
 debug = false
+
+# Size-optimized release profile for shipping small binaries (e.g. a stdio
+# ACP agent bundled into another app). Measured on macOS arm64: goose-cli
+# with --no-default-features --features rustls-tls drops from 98 MB
+# (release, stripped) to 43 MB. panic=abort is safe for the CLI (smoke
+# tested); opt-in only — default release builds are unchanged.
+[profile.release-small]
+inherits = "release"
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true

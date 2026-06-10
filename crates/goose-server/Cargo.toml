@@ -21,7 +21,11 @@ default = [
     "otel",
     "rustls-tls",
     "system-keyring",
+    "analyze",
+    "tiktoken",
 ]
+analyze = ["goose/analyze"]
+tiktoken = ["goose/tiktoken"]
 code-mode = ["goose/code-mode"]
 local-inference = ["goose/local-inference"]
 aws-providers = ["goose/aws-providers"]
