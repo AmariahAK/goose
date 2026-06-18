@@ -395,6 +395,14 @@ fn sanitize_siblings(siblings: Vec<HfApiSibling>) -> Vec<HfApiSibling> {
         .collect()
 }
 
+fn sanitize_repo_siblings(siblings: &[RepoSibling]) -> Vec<RepoSibling> {
+    siblings
+        .iter()
+        .filter(|s| is_safe_relative_path(&s.rfilename))
+        .cloned()
+        .collect()
+}
+
 pub fn hf_authorization_header(token: Option<&str>) -> Option<String> {
     token
         .filter(|token| !token.is_empty())
@@ -974,17 +982,19 @@ mod tests {
     }
 
     #[test]
-    fn mlx_download_filenames_excludes_unsafe_paths() {
+    fn mlx_repo_with_only_unsafe_weights_is_not_compatible() {
+        let config = Some(serde_json::json!({ "model_type": "llama" }));
         let siblings = vec![
-            sibling("model.safetensors"),
             sibling("config.json"),
-            sibling("../../etc/cron.d/evil.safetensors"),
-            sibling("/absolute/config.json"),
+            sibling("tokenizer.json"),
+            sibling("../../escape.safetensors"),
         ];
 
-        let filenames = mlx_download_filenames(&siblings);
-
-        assert_eq!(filenames, vec!["model.safetensors", "config.json"]);
+        assert!(is_mlx_compatible_repo(&config, &siblings));
+        assert!(!is_mlx_compatible_repo(
+            &config,
+            &sanitize_repo_siblings(&siblings)
+        ));
     }
 
     #[test]
@@ -1624,7 +1634,8 @@ pub async fn get_repo_mlx_variants(repo_id: &str) -> Result<Vec<HfModelVariant>>
 }
 
 fn mlx_variants_from_model_info(repo_id: &str, info: &ModelInfo) -> Vec<HfModelVariant> {
-    let siblings = info.siblings.as_deref().unwrap_or(&[]);
+    let siblings = sanitize_repo_siblings(info.siblings.as_deref().unwrap_or(&[]));
+    let siblings = siblings.as_slice();
 
     if !is_mlx_compatible_repo(&info.config, siblings) {
         return Vec::new();
@@ -1816,9 +1827,6 @@ fn merge_model_info(existing: &mut HfModelInfo, duplicate: HfModelInfo) {
 }
 
 fn should_download_for_mlx(filename: &str) -> bool {
-    if !is_safe_relative_path(filename) {
-        return false;
-    }
     filename.ends_with(".safetensors")
         || filename == "config.json"
         || is_standalone_mlx_tokenizer_file(filename)
@@ -2010,7 +2018,8 @@ async fn resolve_mlx_model(repo_id: &str, variant_id: &str) -> Result<ResolvedLo
         .expand(vec!["siblings".to_string()])
         .send()
         .await?;
-    let siblings = info.siblings.as_deref().unwrap_or(&[]);
+    let siblings = sanitize_repo_siblings(info.siblings.as_deref().unwrap_or(&[]));
+    let siblings = siblings.as_slice();
     let filenames = mlx_download_filenames(siblings);
     let total_size = filenames
         .iter()
