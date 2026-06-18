@@ -375,6 +375,21 @@ fn build_download_url(repo_id: &str, filename: &str) -> String {
     format!("{}/{}/resolve/main/{}", HF_DOWNLOAD_BASE, repo_id, filename)
 }
 
+/// Whether a filename-sorted shard group forms a complete `-of-N` set: every
+/// member declares the same total and indices are contiguous `1..=N`.
+fn shards_are_complete(shards: &[&HfApiSibling]) -> bool {
+    let Some(expected_total) = shards.first().and_then(|s| parse_shard_total(&s.rfilename)) else {
+        return false;
+    };
+    if shards.len() != expected_total as usize {
+        return false;
+    }
+    shards.iter().enumerate().all(|(i, shard)| {
+        parse_shard_total(&shard.rfilename) == Some(expected_total)
+            && parse_shard_index(&shard.rfilename) == Some((i + 1) as u32)
+    })
+}
+
 fn is_safe_relative_path(filename: &str) -> bool {
     use std::path::{Component, Path};
 
@@ -556,6 +571,9 @@ fn group_into_variants(repo_id: &str, files: Vec<HfApiSibling>) -> Vec<HfQuantVa
             continue;
         }
         shards.sort_by(|a, b| a.rfilename.cmp(&b.rfilename));
+        if !shards_are_complete(&shards) {
+            continue;
+        }
         let total_size: u64 = shards.iter().map(|s| s.size.unwrap_or(0)).sum();
         let info = quant_info(&quant);
         let first_filename = &shards[0].rfilename;
@@ -1352,6 +1370,23 @@ mod tests {
         assert_eq!(variants[0].size_bytes, 50_000_000_000);
         assert_eq!(variants[1].quantization, "Q4_K_M");
         assert!(!variants[1].sharded);
+    }
+
+    #[test]
+    fn test_group_into_variants_drops_incomplete_shard_group() {
+        let files = vec![
+            HfApiSibling {
+                rfilename: "BF16/gemma-3-27b-it-BF16-00001-of-00002.gguf".into(),
+                size: Some(40_000_000_000),
+            },
+            HfApiSibling {
+                rfilename: "gemma-3-27b-it-Q4_K_M.gguf".into(),
+                size: Some(4_000_000_000),
+            },
+        ];
+        let variants = group_into_variants("unsloth/gemma-3-27b-it-GGUF", files);
+        assert_eq!(variants.len(), 1);
+        assert_eq!(variants[0].quantization, "Q4_K_M");
     }
 
     #[test]
