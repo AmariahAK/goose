@@ -2,7 +2,6 @@ pub mod base;
 pub mod declarative_providers;
 mod experiments;
 pub mod extensions;
-pub mod goose_mode;
 mod migrations;
 pub mod paths;
 pub mod permission;
@@ -17,11 +16,11 @@ pub use base::{merge_config_values, Config, ConfigError};
 pub use declarative_providers::DeclarativeProviderConfig;
 pub use experiments::ExperimentManager;
 pub use extensions::{
-    get_all_extension_names, get_all_extensions, get_enabled_extensions, get_extension_by_name,
-    get_warnings, is_extension_enabled, remove_extension, resolve_extensions_for_new_session,
-    set_extension, set_extension_enabled, ExtensionEntry,
+    get_all_extension_names, get_all_extensions, get_available_extensions, get_enabled_extensions,
+    get_extension_by_name, get_warnings, is_extension_enabled, remove_extension,
+    resolve_extensions_for_new_session, set_extension, set_extension_enabled, ExtensionEntry,
 };
-pub use goose_mode::GooseMode;
+pub use goose_providers::goose_mode::GooseMode;
 pub use permission::PermissionManager;
 pub use signup_nanogpt::configure_nanogpt;
 pub use signup_openrouter::configure_openrouter;

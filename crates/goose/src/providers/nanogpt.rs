@@ -1,15 +1,16 @@
 use super::api_client::{ApiClient, AuthMethod};
 use super::base::{ConfigKey, MessageStream, Provider, ProviderDef, ProviderMetadata};
-use super::errors::ProviderError;
 use super::openai_compatible::{handle_status, stream_openai_compat};
 use super::retry::ProviderRetry;
-use super::utils::{ImageFormat, RequestLog};
+use super::utils::RequestLog;
 use crate::conversation::message::Message;
-use crate::model::ModelConfig;
-use crate::providers::formats::openai::create_request;
 use anyhow::Result;
 use async_trait::async_trait;
 use futures::future::BoxFuture;
+use goose_providers::errors::ProviderError;
+use goose_providers::formats::openai::create_request;
+use goose_providers::images::ImageFormat;
+use goose_providers::model::ModelConfig;
 use rmcp::model::Tool;
 
 pub const NANOGPT_PROVIDER_NAME: &str = "nano-gpt";

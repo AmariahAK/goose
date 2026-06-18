@@ -8,8 +8,13 @@ pub mod azureauth;
 pub mod base;
 #[cfg(feature = "aws-providers")]
 pub mod bedrock;
-pub mod canonical;
-pub mod catalog;
+pub mod canonical {
+    pub use goose_providers::canonical::*;
+}
+mod catalog_util;
+pub mod catalog {
+    pub use super::catalog_util::*;
+}
 pub mod chatgpt_codex;
 pub mod claude_acp;
 pub mod claude_code;
@@ -22,7 +27,6 @@ pub mod databricks;
 pub mod databricks_auth;
 pub mod databricks_v2;
 pub mod embedding;
-pub mod errors;
 pub mod formats;
 mod gcpauth;
 pub mod gcpvertexai;
@@ -31,6 +35,8 @@ pub mod gemini_oauth;
 pub mod githubcopilot;
 pub mod google;
 pub mod http_status;
+pub mod huggingface;
+pub mod huggingface_auth;
 mod init;
 pub mod inventory;
 pub mod kimicode;
@@ -47,7 +53,9 @@ pub mod openrouter;
 pub mod pi_acp;
 pub mod provider_registry;
 pub mod provider_test;
-mod retry;
+mod retry {
+    pub use goose_providers::retry::*;
+}
 #[cfg(feature = "aws-providers")]
 pub mod sagemaker_tgi;
 pub mod snowflake;
@@ -58,6 +66,7 @@ pub mod usage_estimator;
 pub mod utils;
 
 pub mod xai;
+pub mod xai_oauth;
 
 pub use init::{
     cleanup_provider, create, create_with_default_model, create_with_named_model,
