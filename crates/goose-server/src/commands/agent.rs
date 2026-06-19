@@ -88,7 +88,10 @@ pub async fn run() -> Result<()> {
         check_acp_token,
     ));
 
-    let app = rest_router.merge(acp_router).layer(cors);
+    // Apply the general REST CORS only to the REST router so it doesn't override
+    // ACP's specialized CORS policy. Merging and then layering a permissive
+    // CORS would make ACP accept all origins again.
+    let app = rest_router.layer(cors).merge(acp_router);
 
     let addr = settings.socket_addr();
 
