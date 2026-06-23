@@ -135,6 +135,7 @@ Use `${PLUGIN_ROOT}` in a command to reference the plugin directory. goose also 
 | `SessionEnd` | A session ends | None |
 | `Stop` | goose finishes a turn or receives a stop event | None |
 | `UserPromptSubmit` | The user submits a prompt | Prompt text |
+| `AfterAgentResponse` | goose finishes an assistant text response | Assistant response text |
 | `PreToolUse` | Before goose runs a tool | Tool name |
 | `PostToolUse` | After a tool succeeds | Tool name |
 | `PostToolUseFailure` | After a tool fails | Tool name |
@@ -151,7 +152,7 @@ The matcher is a regular expression matched against the most relevant string for
 
 ## Hook Payload
 
-When a hook runs, goose writes a JSON payload to the command's stdin. The payload always includes the event name and session ID, and may include fields such as the tool name, tool input, user message, last assistant message, or working directory.
+When a hook runs, goose writes a JSON payload to the command's stdin. The payload always includes the event name and session ID, and may include fields such as the tool name, tool input, user prompt, assistant response message, last assistant message, or working directory.
 
 Example payload for a tool event:
 
@@ -173,6 +174,17 @@ Example payload for a `Stop` event after an assistant reply:
   "event": "Stop",
   "session_id": "abc-123",
   "last_assistant_message": "Done. I updated the file and ran the tests."
+}
+```
+
+Example payload for an assistant response event:
+
+```json
+{
+  "event": "AfterAgentResponse",
+  "session_id": "abc-123",
+  "matcher_context": "Done. I updated the file and ran the tests.",
+  "message": "Done. I updated the file and ran the tests."
 }
 ```
 

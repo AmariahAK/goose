@@ -458,6 +458,22 @@ impl Agent {
             .await
     }
 
+    async fn emit_after_agent_response_hook(&self, session_id: &str, message: &str) {
+        if message.is_empty()
+            || !self
+                .hook_manager
+                .has_hooks(crate::hooks::HookEvent::AfterAgentResponse)
+        {
+            return;
+        }
+        let ctx =
+            crate::hooks::HookContext::new(crate::hooks::HookEvent::AfterAgentResponse, session_id)
+                .with_message(message.to_string());
+        self.hook_manager
+            .emit(crate::hooks::HookEvent::AfterAgentResponse, ctx)
+            .await;
+    }
+
     pub async fn steer(&self, session_id: &str, message: Message) {
         self.pending_steers
             .lock()
@@ -1928,6 +1944,11 @@ impl Agent {
                         .await
                     {
                         crate::hooks::HookDecision::Allow => {
+                            self.emit_after_agent_response_hook(
+                                &session_config.id,
+                                &last_assistant_text,
+                            )
+                            .await;
                             stop_hook_handled_for_exit = true;
                             break;
                         }
@@ -2592,14 +2613,28 @@ impl Agent {
                 } else {
                     messages_to_add
                 };
+                let mut after_agent_response_text =
+                    if no_tools_called && !last_assistant_text.is_empty() && !messages_to_add.is_empty() {
+                        Some(last_assistant_text.clone())
+                    } else {
+                        None
+                    };
 
                 for msg in &messages_to_add {
                     session_manager.add_message(&session_config.id, msg).await?;
                 }
                 conversation.extend(messages_to_add);
 
-                if exit_chat && self.has_pending_steers(&session_config.id).await {
+                let has_pending_steers = self.has_pending_steers(&session_config.id).await;
+                if has_pending_steers && exit_chat {
                     exit_chat = false;
+                }
+
+                if !exit_chat {
+                    if let Some(response_text) = after_agent_response_text.take() {
+                        self.emit_after_agent_response_hook(&session_config.id, &response_text)
+                            .await;
+                    }
                 }
 
                 if exit_chat {
@@ -2608,6 +2643,10 @@ impl Agent {
                         .await
                     {
                         crate::hooks::HookDecision::Allow => {
+                            if let Some(response_text) = after_agent_response_text.take() {
+                                self.emit_after_agent_response_hook(&session_config.id, &response_text)
+                                    .await;
+                            }
                             stop_hook_handled_for_exit = true;
                             break;
                         }
@@ -3371,6 +3410,177 @@ cat > "$PLUGIN_ROOT/payload.json"
 exit 0
 "#;
 
+    const APPEND_PAYLOAD_SCRIPT: &str = r#"#!/bin/sh
+cat >> "$PLUGIN_ROOT/payloads.jsonl"
+printf '\n' >> "$PLUGIN_ROOT/payloads.jsonl"
+exit 0
+"#;
+
+    const RECORD_PAYLOAD_AND_LOG_SCRIPT: &str = r#"#!/bin/sh
+cat > "$PLUGIN_ROOT/payload.json"
+echo after >> "$PLUGIN_ROOT/hook.log"
+exit 0
+"#;
+
+    const BLOCK_ONCE_ALLOW_SCRIPT: &str = r#"#!/bin/sh
+count_file="$PLUGIN_ROOT/count"
+count=0
+if [ -f "$count_file" ]; then
+  count=$(cat "$count_file")
+fi
+count=$((count + 1))
+echo "$count" > "$count_file"
+echo "stop:$count" >> "$PLUGIN_ROOT/hook.log"
+if [ "$count" -eq 1 ]; then
+  echo "block $count" >&2
+  exit 2
+fi
+exit 0
+"#;
+
+    struct AgentResponseHookTestEnv {
+        temp_dir: TempDir,
+        payload_path: PathBuf,
+    }
+
+    impl AgentResponseHookTestEnv {
+        fn new() -> Result<Self> {
+            Self::new_with_script(RECORD_PAYLOAD_SCRIPT)
+        }
+
+        fn new_appending() -> Result<Self> {
+            Self::new_with_script(APPEND_PAYLOAD_SCRIPT)
+        }
+
+        fn new_with_script(script: &str) -> Result<Self> {
+            let temp_dir = tempfile::tempdir()?;
+            let plugin_dir = temp_dir.path().join("agent-response-recorder");
+            std::fs::create_dir_all(plugin_dir.join("hooks"))?;
+            std::fs::write(
+                plugin_dir.join("hooks/hooks.json"),
+                r#"{
+  "hooks": {
+    "AfterAgentResponse": [
+      {
+        "hooks": [
+          { "type": "command", "command": "sh ${PLUGIN_ROOT}/record.sh" }
+        ]
+      }
+    ]
+  }
+}
+"#,
+            )?;
+            std::fs::write(plugin_dir.join("record.sh"), script)?;
+
+            Ok(Self {
+                temp_dir,
+                payload_path: plugin_dir.join("payload.json"),
+            })
+        }
+
+        fn hook_manager(&self) -> crate::hooks::HookManager {
+            crate::hooks::HookManager::from_plugins_for_test(vec![DiscoveredPlugin {
+                name: "agent-response-recorder".into(),
+                root: self.temp_dir.path().join("agent-response-recorder"),
+                scope: PluginScope::Project,
+            }])
+        }
+
+        fn data_dir(&self) -> PathBuf {
+            self.temp_dir.path().join("data")
+        }
+
+        fn payload(&self) -> Result<Value> {
+            let payload = std::fs::read_to_string(&self.payload_path)?;
+            Ok(serde_json::from_str(&payload)?)
+        }
+
+        fn payloads(&self) -> Result<Vec<Value>> {
+            let payloads = std::fs::read_to_string(
+                self.temp_dir
+                    .path()
+                    .join("agent-response-recorder/payloads.jsonl"),
+            )?;
+            payloads
+                .lines()
+                .map(|line| Ok(serde_json::from_str(line)?))
+                .collect()
+        }
+    }
+
+    struct AgentResponseAfterStopHookTestEnv {
+        temp_dir: TempDir,
+        payload_path: PathBuf,
+        hook_log: PathBuf,
+    }
+
+    impl AgentResponseAfterStopHookTestEnv {
+        fn new() -> Result<Self> {
+            let temp_dir = tempfile::tempdir()?;
+            let plugin_dir = temp_dir.path().join("agent-response-after-stop");
+            std::fs::create_dir_all(plugin_dir.join("hooks"))?;
+            std::fs::write(
+                plugin_dir.join("hooks/hooks.json"),
+                r#"{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "sh ${PLUGIN_ROOT}/stop.sh" }
+        ]
+      }
+    ],
+    "AfterAgentResponse": [
+      {
+        "hooks": [
+          { "type": "command", "command": "sh ${PLUGIN_ROOT}/record-after.sh" }
+        ]
+      }
+    ]
+  }
+}
+"#,
+            )?;
+            std::fs::write(plugin_dir.join("stop.sh"), BLOCK_ONCE_ALLOW_SCRIPT)?;
+            std::fs::write(
+                plugin_dir.join("record-after.sh"),
+                RECORD_PAYLOAD_AND_LOG_SCRIPT,
+            )?;
+
+            Ok(Self {
+                temp_dir,
+                payload_path: plugin_dir.join("payload.json"),
+                hook_log: plugin_dir.join("hook.log"),
+            })
+        }
+
+        fn hook_manager(&self) -> crate::hooks::HookManager {
+            crate::hooks::HookManager::from_plugins_for_test(vec![DiscoveredPlugin {
+                name: "agent-response-after-stop".into(),
+                root: self.temp_dir.path().join("agent-response-after-stop"),
+                scope: PluginScope::Project,
+            }])
+        }
+
+        fn data_dir(&self) -> PathBuf {
+            self.temp_dir.path().join("data")
+        }
+
+        fn payload(&self) -> Result<Value> {
+            let payload = std::fs::read_to_string(&self.payload_path)?;
+            Ok(serde_json::from_str(&payload)?)
+        }
+
+        fn hook_log_lines(&self) -> Vec<String> {
+            std::fs::read_to_string(&self.hook_log)
+                .unwrap_or_default()
+                .lines()
+                .map(ToOwned::to_owned)
+                .collect()
+        }
+    }
+
     struct StopHookTestEnv {
         temp_dir: TempDir,
         hook_log: PathBuf,
@@ -3736,6 +3946,139 @@ exit 0
             Some("streamed assistant reply")
         );
         assert!(payload.get("message").is_none());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn after_agent_response_hook_receives_streamed_reply_text() -> Result<()> {
+        let env = AgentResponseHookTestEnv::new()?;
+        let provider = Arc::new(ChunkedTextProvider);
+        let (agent, session_id) =
+            create_test_agent(env.data_dir(), env.hook_manager(), provider).await?;
+
+        let messages = run_stop_hook_test_turn(&agent, &session_id, "hello").await?;
+        let texts = visible_texts(&messages);
+        assert_eq!(texts.join(""), "streamed assistant reply");
+
+        let payload = env.payload()?;
+        assert_eq!(
+            payload.get("event").and_then(Value::as_str),
+            Some("AfterAgentResponse")
+        );
+        assert_eq!(
+            payload.get("session_id").and_then(Value::as_str),
+            Some(session_id.as_str())
+        );
+        assert_eq!(
+            payload.get("matcher_context").and_then(Value::as_str),
+            Some("streamed assistant reply")
+        );
+        assert_eq!(
+            payload.get("message").and_then(Value::as_str),
+            Some("streamed assistant reply")
+        );
+        assert!(payload.get("tool_name").is_none());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn after_agent_response_hook_emits_before_pending_steers_continue_turn() -> Result<()> {
+        let env = AgentResponseHookTestEnv::new_appending()?;
+        let provider = Arc::new(CountingTextProvider::new());
+        let (agent, session_id) =
+            create_test_agent(env.data_dir(), env.hook_manager(), provider.clone()).await?;
+
+        agent
+            .steer(&session_id, Message::user().with_text("queued steer"))
+            .await;
+
+        let messages = run_stop_hook_test_turn(&agent, &session_id, "hello").await?;
+        let texts = visible_texts(&messages);
+
+        assert_eq!(
+            provider.call_count(),
+            2,
+            "queued steer should continue the loop after the first assistant response"
+        );
+        assert!(texts.iter().any(|text| text == "provider response 0"));
+        assert!(texts.iter().any(|text| text == "provider response 1"));
+
+        let payloads = env.payloads()?;
+        let response_messages: Vec<&str> = payloads
+            .iter()
+            .filter_map(|payload| payload.get("message").and_then(Value::as_str))
+            .collect();
+        assert_eq!(
+            response_messages,
+            ["provider response 0", "provider response 1"]
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn after_agent_response_hook_emits_before_goal_continuation() -> Result<()> {
+        let env = AgentResponseHookTestEnv::new_appending()?;
+        let provider = Arc::new(CountingTextProvider::new());
+        let (agent, session_id) =
+            create_test_agent(env.data_dir(), env.hook_manager(), provider.clone()).await?;
+
+        agent.set_goal(Some("finish the task".to_string())).await;
+
+        let messages = run_stop_hook_test_turn(&agent, &session_id, "hello").await?;
+        let texts = visible_texts(&messages);
+
+        assert_eq!(
+            provider.call_count(),
+            2,
+            "goal check should continue the loop after the first assistant response"
+        );
+        assert!(texts.iter().any(|text| text == "provider response 0"));
+        assert!(texts.iter().any(|text| text == "provider response 1"));
+
+        let payloads = env.payloads()?;
+        let response_messages: Vec<&str> = payloads
+            .iter()
+            .filter_map(|payload| payload.get("message").and_then(Value::as_str))
+            .collect();
+        assert_eq!(
+            response_messages,
+            ["provider response 0", "provider response 1"]
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn after_agent_response_hook_waits_for_stop_hook_allow() -> Result<()> {
+        let env = AgentResponseAfterStopHookTestEnv::new()?;
+        let provider = Arc::new(CountingTextProvider::new());
+        let (agent, session_id) =
+            create_test_agent(env.data_dir(), env.hook_manager(), provider.clone()).await?;
+
+        let messages = run_stop_hook_test_turn(&agent, &session_id, "hello").await?;
+        let texts = visible_texts(&messages);
+
+        assert_eq!(
+            provider.call_count(),
+            2,
+            "first Stop denial should trigger one retry before the second Stop allows"
+        );
+        assert!(texts.iter().any(|text| text == "provider response 0"));
+        assert!(texts.iter().any(|text| text == "provider response 1"));
+        assert_eq!(env.hook_log_lines(), ["stop:1", "stop:2", "after"]);
+
+        let payload = env.payload()?;
+        assert_eq!(
+            payload.get("event").and_then(Value::as_str),
+            Some("AfterAgentResponse")
+        );
+        assert_eq!(
+            payload.get("message").and_then(Value::as_str),
+            Some("provider response 1")
+        );
 
         Ok(())
     }
