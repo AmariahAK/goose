@@ -63,7 +63,7 @@
     "env": [
       "ALIBABA_CODING_PLAN_API_KEY"
     ],
-    "model_count": 11
+    "model_count": 12
   },
   {
     "id": "alibaba-coding-plan-cn",
@@ -85,7 +85,18 @@
     "env": [
       "ALIBABA_TOKEN_PLAN_API_KEY"
     ],
-    "model_count": 15
+    "model_count": 18
+  },
+  {
+    "id": "alibaba-token-plan-cn",
+    "display_name": "Alibaba Token Plan (China)",
+    "npm": "@ai-sdk/openai-compatible",
+    "api": "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+    "doc": "https://www.alibabacloud.com/help/zh/model-studio/token-plan-overview",
+    "env": [
+      "ALIBABA_TOKEN_PLAN_API_KEY"
+    ],
+    "model_count": 18
   },
   {
     "id": "ambient",
@@ -96,7 +107,7 @@
     "env": [
       "AMBIENT_API_KEY"
     ],
-    "model_count": 2
+    "model_count": 3
   },
   {
     "id": "anyapi",
@@ -151,7 +162,7 @@
     "env": [
       "BASETEN_API_KEY"
     ],
-    "model_count": 11
+    "model_count": 13
   },
   {
     "id": "berget",
@@ -195,7 +206,7 @@
     "env": [
       "CLAUDINIO_API_KEY"
     ],
-    "model_count": 1
+    "model_count": 2
   },
   {
     "id": "cloudferro-sherlock",
@@ -218,7 +229,7 @@
       "CLOUDFLARE_ACCOUNT_ID",
       "CLOUDFLARE_API_KEY"
     ],
-    "model_count": 20
+    "model_count": 22
   },
   {
     "id": "cortecs",
@@ -229,7 +240,7 @@
     "env": [
       "CORTECS_API_KEY"
     ],
-    "model_count": 51
+    "model_count": 56
   },
   {
     "id": "crof",
@@ -240,7 +251,7 @@
     "env": [
       "CROF_API_KEY"
     ],
-    "model_count": 21
+    "model_count": 23
   },
   {
     "id": "databricks",
@@ -274,7 +285,7 @@
     "env": [
       "DIGITALOCEAN_ACCESS_TOKEN"
     ],
-    "model_count": 78
+    "model_count": 80
   },
   {
     "id": "dinference",
@@ -321,17 +332,6 @@
     "model_count": 47
   },
   {
-    "id": "firepass",
-    "display_name": "Fireworks (Firepass)",
-    "npm": "@ai-sdk/openai-compatible",
-    "api": "https://api.fireworks.ai/inference/v1/",
-    "doc": "https://docs.fireworks.ai/firepass",
-    "env": [
-      "FIREPASS_API_KEY"
-    ],
-    "model_count": 1
-  },
-  {
     "id": "fireworks-ai",
     "display_name": "Fireworks AI",
     "npm": "@ai-sdk/openai-compatible",
@@ -340,7 +340,7 @@
     "env": [
       "FIREWORKS_API_KEY"
     ],
-    "model_count": 13
+    "model_count": 15
   },
   {
     "id": "freemodel",
@@ -439,7 +439,7 @@
     "env": [
       "HF_TOKEN"
     ],
-    "model_count": 24
+    "model_count": 46
   },
   {
     "id": "iflowcn",
@@ -527,7 +527,7 @@
     "env": [
       "KIMI_API_KEY"
     ],
-    "model_count": 3
+    "model_count": 4
   },
   {
     "id": "kuae-cloud-coding-plan",
@@ -560,7 +560,7 @@
     "env": [
       "LLMGATEWAY_API_KEY"
     ],
-    "model_count": 191
+    "model_count": 199
   },
   {
     "id": "llmtr",
@@ -586,14 +586,14 @@
   },
   {
     "id": "lucidquery",
-    "display_name": "LucidQuery AI",
+    "display_name": "LucidQuery",
     "npm": "@ai-sdk/openai-compatible",
-    "api": "https://lucidquery.com/api/v1",
-    "doc": "https://lucidquery.com/api/docs",
+    "api": "https://api.lucidquery.com/v1",
+    "doc": "https://lucidquery.com/docs",
     "env": [
       "LUCIDQUERY_API_KEY"
     ],
-    "model_count": 2
+    "model_count": 4
   },
   {
     "id": "meganova",
@@ -703,7 +703,7 @@
     "env": [
       "MOONSHOT_API_KEY"
     ],
-    "model_count": 7
+    "model_count": 9
   },
   {
     "id": "moonshotai-cn",
@@ -714,7 +714,7 @@
     "env": [
       "MOONSHOT_API_KEY"
     ],
-    "model_count": 7
+    "model_count": 9
   },
   {
     "id": "morph",
@@ -758,7 +758,19 @@
     "env": [
       "NEBIUS_API_KEY"
     ],
-    "model_count": 31
+    "model_count": 29
+  },
+  {
+    "id": "neon",
+    "display_name": "Neon",
+    "npm": "@ai-sdk/openai-compatible",
+    "api": "${NEON_AI_GATEWAY_BASE_URL}/ai-gateway/mlflow/v1",
+    "doc": "https://neon.com/docs",
+    "env": [
+      "NEON_AI_GATEWAY_BASE_URL",
+      "NEON_AI_GATEWAY_TOKEN"
+    ],
+    "model_count": 25
   },
   {
     "id": "neuralwatt",
@@ -769,7 +781,7 @@
     "env": [
       "NEURALWATT_API_KEY"
     ],
-    "model_count": 14
+    "model_count": 13
   },
   {
     "id": "nova",
@@ -791,7 +803,7 @@
     "env": [
       "NOVITA_API_KEY"
     ],
-    "model_count": 104
+    "model_count": 105
   },
   {
     "id": "nvidia",
@@ -813,7 +825,7 @@
     "env": [
       "OLLAMA_API_KEY"
     ],
-    "model_count": 41
+    "model_count": 43
   },
   {
     "id": "opencode",
@@ -835,7 +847,7 @@
     "env": [
       "OPENCODE_API_KEY"
     ],
-    "model_count": 17
+    "model_count": 19
   },
   {
     "id": "orcarouter",
@@ -990,7 +1002,7 @@
     "env": [
       "SILICONFLOW_API_KEY"
     ],
-    "model_count": 76
+    "model_count": 70
   },
   {
     "id": "siliconflow-cn",
@@ -1001,7 +1013,7 @@
     "env": [
       "SILICONFLOW_CN_API_KEY"
     ],
-    "model_count": 82
+    "model_count": 74
   },
   {
     "id": "snowflake-cortex",
@@ -1013,7 +1025,7 @@
       "SNOWFLAKE_ACCOUNT",
       "SNOWFLAKE_CORTEX_PAT"
     ],
-    "model_count": 11
+    "model_count": 18
   },
   {
     "id": "stackit",
@@ -1068,7 +1080,7 @@
     "env": [
       "SYNTHETIC_API_KEY"
     ],
-    "model_count": 33
+    "model_count": 34
   },
   {
     "id": "tencent-coding-plan",
@@ -1104,6 +1116,17 @@
     "model_count": 9
   },
   {
+    "id": "umans-ai",
+    "display_name": "Umans AI",
+    "npm": "@ai-sdk/openai-compatible",
+    "api": "https://api.code.umans.ai/v1",
+    "doc": "https://app.umans.ai/offers/code/docs/orgs",
+    "env": [
+      "UMANS_AI_API_KEY"
+    ],
+    "model_count": 5
+  },
+  {
     "id": "umans-ai-coding-plan",
     "display_name": "Umans AI Coding Plan",
     "npm": "@ai-sdk/openai-compatible",
@@ -1112,7 +1135,7 @@
     "env": [
       "UMANS_AI_CODING_PLAN_API_KEY"
     ],
-    "model_count": 5
+    "model_count": 6
   },
   {
     "id": "upstage",
@@ -1233,7 +1256,7 @@
     "env": [
       "ZHIPU_API_KEY"
     ],
-    "model_count": 13
+    "model_count": 14
   },
   {
     "id": "zai-coding-plan",
@@ -1244,7 +1267,18 @@
     "env": [
       "ZHIPU_API_KEY"
     ],
-    "model_count": 5
+    "model_count": 6
+  },
+  {
+    "id": "zeldoc",
+    "display_name": "Zeldoc",
+    "npm": "@ai-sdk/openai-compatible",
+    "api": "https://api.zeldoc.ai/v1",
+    "doc": "https://docs.zeldoc.ai",
+    "env": [
+      "ZELDOC_API_KEY"
+    ],
+    "model_count": 1
   },
   {
     "id": "zenmux",
@@ -1255,7 +1289,7 @@
     "env": [
       "ZENMUX_API_KEY"
     ],
-    "model_count": 108
+    "model_count": 112
   },
   {
     "id": "zhipuai",
@@ -1266,7 +1300,7 @@
     "env": [
       "ZHIPU_API_KEY"
     ],
-    "model_count": 12
+    "model_count": 13
   },
   {
     "id": "zhipuai-coding-plan",
@@ -1277,6 +1311,6 @@
     "env": [
       "ZHIPU_API_KEY"
     ],
-    "model_count": 6
+    "model_count": 7
   }
 ]

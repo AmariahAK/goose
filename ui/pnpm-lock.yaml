@@ -189,6 +189,9 @@ importers:
       zod:
         specifier: ^3.25.76
         version: 3.25.76
+      zod-to-json-schema:
+        specifier: 3.25.1
+        version: 3.25.1(zod@3.25.76)
     devDependencies:
       '@electron-forge/cli':
         specifier: ^7.11.1
@@ -226,6 +229,9 @@ importers:
       '@formatjs/cli':
         specifier: ^6.14.0
         version: 6.14.0
+      '@formatjs/icu-messageformat-parser':
+        specifier: 3.5.3
+        version: 3.5.3
       '@hey-api/openapi-ts':
         specifier: ^0.93.0
         version: 0.93.1(magicast@0.5.2)(typescript@5.9.3)

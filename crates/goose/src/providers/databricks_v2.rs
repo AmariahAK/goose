@@ -3,9 +3,7 @@ use async_stream::try_stream;
 use async_trait::async_trait;
 use futures::future::BoxFuture;
 use futures::TryStreamExt;
-use goose_providers::formats::openai::{
-    self, extract_reasoning_effort, is_openai_responses_model, ModelConfigParams,
-};
+use goose_providers::formats::openai::{self, extract_reasoning_effort, is_openai_responses_model};
 use goose_providers::images::ImageFormat;
 use serde::Serialize;
 use serde_json::Value;
@@ -21,22 +19,24 @@ use super::base::{
     DEFAULT_PROVIDER_TIMEOUT_SECS,
 };
 use super::databricks_auth::{DatabricksAuth, DatabricksAuthProvider};
-use super::formats::{anthropic, openai_responses};
+use super::formats::anthropic;
 use super::openai_compatible::{handle_status, stream_openai_compat, stream_responses_compat};
 use super::retry::ProviderRetry;
-use super::utils::RequestLog;
 use crate::config::ConfigError;
 use crate::conversation::message::Message;
-use crate::model::ModelConfig;
 use crate::providers::retry::{
     RetryConfig, DEFAULT_BACKOFF_MULTIPLIER, DEFAULT_INITIAL_RETRY_INTERVAL_MS,
     DEFAULT_MAX_RETRIES, DEFAULT_MAX_RETRY_INTERVAL_MS,
 };
 use goose_providers::errors::ProviderError;
+use goose_providers::formats::openai_responses;
+use goose_providers::model::ModelConfig;
+use goose_providers::request_log::{start_log, LoggerHandleExt};
 use rmcp::model::Tool;
 
 const DATABRICKS_V2_PROVIDER_NAME: &str = "databricks_v2";
 const DATABRICKS_V2_LIST_ENDPOINTS_PATH: &str = "api/ai-gateway/v2/endpoints";
+const DATABRICKS_V2_LIST_ENDPOINTS_PAGE_SIZE: usize = 100;
 pub const DATABRICKS_V2_DEFAULT_MODEL: &str = "databricks-gpt-5-5";
 pub const DATABRICKS_V2_KNOWN_MODELS: &[&str] =
     &["databricks-gpt-5-5", "databricks-claude-opus-4-7"];
@@ -68,7 +68,10 @@ impl DatabricksV2Provider {
         super::oauth::cleanup_oauth_cache()
     }
 
-    pub async fn from_env(model: ModelConfig) -> Result<Self> {
+    pub async fn from_env(
+        model: ModelConfig,
+        tls_config: Option<crate::providers::api_client::TlsConfig>,
+    ) -> Result<Self> {
         let config = crate::config::Config::global();
 
         let mut host: Result<String, ConfigError> = config.get_param("DATABRICKS_HOST");
@@ -92,16 +95,7 @@ impl DatabricksV2Provider {
             DatabricksAuth::oauth(host.clone())
         };
 
-        Self::new(host, auth, model, retry_config)
-    }
-
-    pub fn from_params(host: String, api_key: String, model: ModelConfig) -> Result<Self> {
-        Self::new(
-            host,
-            DatabricksAuth::token(api_key),
-            model,
-            RetryConfig::default(),
-        )
+        Self::new(host, auth, model, retry_config, tls_config)
     }
 
     fn new(
@@ -109,6 +103,7 @@ impl DatabricksV2Provider {
         auth: DatabricksAuth,
         model: ModelConfig,
         retry_config: RetryConfig,
+        tls_config: Option<crate::providers::api_client::TlsConfig>,
     ) -> Result<Self> {
         let token_cache = Arc::new(Mutex::new(match &auth {
             DatabricksAuth::Token(t) => Some(t.clone()),
@@ -120,10 +115,11 @@ impl DatabricksV2Provider {
             token_cache: token_cache.clone(),
         }));
 
-        let api_client = ApiClient::with_timeout(
+        let api_client = ApiClient::with_timeout_and_tls(
             host,
             auth_method,
             Duration::from_secs(DEFAULT_PROVIDER_TIMEOUT_SECS),
+            tls_config,
         )?;
 
         Ok(Self {
@@ -189,7 +185,9 @@ impl DatabricksV2Provider {
         model_name.contains("claude")
     }
 
-    fn parse_list_endpoints_response(json: &Value) -> Result<Vec<String>, ProviderError> {
+    fn parse_list_endpoints_response(
+        json: &Value,
+    ) -> Result<(Vec<String>, Option<String>), ProviderError> {
         let endpoints = json
             .get("endpoints")
             .and_then(|v| v.as_array())
@@ -200,7 +198,7 @@ impl DatabricksV2Provider {
                 )
             })?;
 
-        let mut models: Vec<String> = endpoints
+        let models: Vec<String> = endpoints
             .iter()
             .filter_map(|endpoint| {
                 endpoint
@@ -209,8 +207,14 @@ impl DatabricksV2Provider {
                     .map(str::to_string)
             })
             .collect();
-        models.sort();
-        Ok(models)
+
+        let next_page_token = json
+            .get("next_page_token")
+            .and_then(|v| v.as_str())
+            .filter(|token| !token.is_empty())
+            .map(str::to_string);
+
+        Ok((models, next_page_token))
     }
 
     async fn stream_openai_responses(
@@ -224,7 +228,7 @@ impl DatabricksV2Provider {
         let mut payload =
             openai_responses::create_responses_request(model_config, system, messages, tools)?;
         payload["stream"] = Value::Bool(true);
-        let mut log = RequestLog::start(model_config, &payload)?;
+        let mut log = start_log(model_config, &payload)?;
 
         let response = self
             .with_retry(|| async {
@@ -251,13 +255,7 @@ impl DatabricksV2Provider {
         tools: &[Tool],
     ) -> Result<MessageStream, ProviderError> {
         let mut payload = openai::create_request(
-            ModelConfigParams {
-                model_name: model_config.model_name.as_str(),
-                thinking_effort: model_config.thinking_effort(),
-                temperature: model_config.temperature,
-                max_tokens: model_config.max_tokens,
-                request_params: model_config.request_params.as_ref(),
-            },
+            model_config,
             system,
             messages,
             tools,
@@ -267,7 +265,7 @@ impl DatabricksV2Provider {
         if payload.get("max_tokens").is_none() {
             payload["max_tokens"] = Value::from(model_config.max_output_tokens());
         }
-        let mut log = RequestLog::start(model_config, &payload)?;
+        let mut log = start_log(model_config, &payload)?;
 
         let response = self
             .with_retry(|| async {
@@ -299,7 +297,7 @@ impl DatabricksV2Provider {
     ) -> Result<MessageStream, ProviderError> {
         let mut payload = anthropic::create_request(model_config, system, messages, tools)?;
         payload["stream"] = Value::Bool(true);
-        let mut log = RequestLog::start(model_config, &payload)?;
+        let mut log = start_log(model_config, &payload)?;
 
         let response = self
             .with_retry(|| async {
@@ -336,9 +334,7 @@ impl DatabricksV2Provider {
     }
 }
 
-impl ProviderDef for DatabricksV2Provider {
-    type Provider = Self;
-
+impl goose_providers::base::ProviderDescriptor for DatabricksV2Provider {
     fn metadata() -> ProviderMetadata {
         ProviderMetadata::new(
             DATABRICKS_V2_PROVIDER_NAME,
@@ -353,16 +349,17 @@ impl ProviderDef for DatabricksV2Provider {
             ],
         )
     }
+}
+
+impl ProviderDef for DatabricksV2Provider {
+    type Provider = Self;
 
     fn from_env(
         model: ModelConfig,
         _extensions: Vec<crate::config::ExtensionConfig>,
+        tls_config: Option<crate::providers::api_client::TlsConfig>,
     ) -> BoxFuture<'static, Result<Self::Provider>> {
-        Box::pin(Self::from_env(model))
-    }
-
-    fn supports_inventory_refresh() -> bool {
-        true
+        Box::pin(Self::from_env(model, tls_config))
     }
 }
 
@@ -417,31 +414,53 @@ impl Provider for DatabricksV2Provider {
     }
 
     async fn fetch_supported_models(&self) -> Result<Vec<String>, ProviderError> {
-        let response = self
-            .api_client
-            .response_get(None, DATABRICKS_V2_LIST_ENDPOINTS_PATH)
-            .await
-            .map_err(|e| {
+        let mut models = Vec::new();
+        let mut page_token: Option<String> = None;
+
+        loop {
+            let mut path = format!(
+                "{}?page_size={}",
+                DATABRICKS_V2_LIST_ENDPOINTS_PATH, DATABRICKS_V2_LIST_ENDPOINTS_PAGE_SIZE
+            );
+            if let Some(token) = &page_token {
+                path.push_str(&format!("&page_token={}", urlencoding::encode(token)));
+            }
+
+            let response = self
+                .api_client
+                .response_get(None, &path)
+                .await
+                .map_err(|e| {
+                    ProviderError::RequestFailed(format!(
+                        "Failed to fetch Databricks AI Gateway endpoints: {e}"
+                    ))
+                })?;
+
+            if !response.status().is_success() {
+                let status = response.status();
+                let detail = response.text().await.unwrap_or_default();
+                return Err(ProviderError::RequestFailed(format!(
+                    "Failed to fetch Databricks AI Gateway endpoints: {status} {detail}"
+                )));
+            }
+
+            let json: Value = response.json().await.map_err(|e| {
                 ProviderError::RequestFailed(format!(
-                    "Failed to fetch Databricks AI Gateway endpoints: {e}"
+                    "Failed to parse Databricks AI Gateway endpoints response: {e}"
                 ))
             })?;
 
-        if !response.status().is_success() {
-            let status = response.status();
-            let detail = response.text().await.unwrap_or_default();
-            return Err(ProviderError::RequestFailed(format!(
-                "Failed to fetch Databricks AI Gateway endpoints: {status} {detail}"
-            )));
+            let (page_models, next_page_token) = Self::parse_list_endpoints_response(&json)?;
+            models.extend(page_models);
+
+            if next_page_token.is_none() || next_page_token == page_token {
+                break;
+            }
+            page_token = next_page_token;
         }
 
-        let json: Value = response.json().await.map_err(|e| {
-            ProviderError::RequestFailed(format!(
-                "Failed to parse Databricks AI Gateway endpoints response: {e}"
-            ))
-        })?;
-
-        Self::parse_list_endpoints_response(&json)
+        models.sort();
+        Ok(models)
     }
 }
 
@@ -480,19 +499,22 @@ mod tests {
                 {"name": "databricks-claude-opus-4-7"},
                 {"name": "databricks-gpt-5-5"},
                 {"name": "custom-model"}
-            ]
+            ],
+            "next_page_token": "tok"
         });
 
-        let models = DatabricksV2Provider::parse_list_endpoints_response(&json).unwrap();
+        let (models, next_page_token) =
+            DatabricksV2Provider::parse_list_endpoints_response(&json).unwrap();
 
         assert_eq!(
             models,
             vec![
-                "custom-model".to_string(),
                 "databricks-claude-opus-4-7".to_string(),
                 "databricks-gpt-5-5".to_string(),
+                "custom-model".to_string(),
             ]
         );
+        assert_eq!(next_page_token.as_deref(), Some("tok"));
     }
 
     #[test]

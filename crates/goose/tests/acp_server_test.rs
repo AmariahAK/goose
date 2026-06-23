@@ -2,8 +2,9 @@
 #[path = "acp_common_tests/mod.rs"]
 mod common_tests;
 use agent_client_protocol::schema::{
-    ListSessionsRequest, ListSessionsResponse, SessionConfigKind, SessionConfigOptionCategory,
-    SessionConfigOptionValue, SetSessionConfigOptionRequest,
+    ListSessionsRequest, ListSessionsResponse, NewSessionRequest, SessionConfigKind,
+    SessionConfigOptionCategory, SessionConfigOptionValue, SessionInfo,
+    SetSessionConfigOptionRequest,
 };
 use agent_client_protocol::ErrorCode;
 use common_tests::fixtures::server::AcpServerConnection;
@@ -23,8 +24,10 @@ use common_tests::{
     run_shell_terminal_false, run_shell_terminal_true,
 };
 use goose::config::GooseMode;
-use goose::conversation::message::Message;
+use goose::conversation::message::{Message, MessageMetadata};
 use goose::custom_requests::{GetSessionInfoRequest, GetSessionInfoResponse};
+use goose::recipe::{Recipe, Settings};
+use goose::recipe_deeplink;
 use goose::session::{SessionManager, SessionType};
 use std::path::Path;
 
@@ -116,6 +119,25 @@ fn assert_invalid_params(error: anyhow::Error) {
     assert_eq!(acp_error.code, ErrorCode::InvalidParams);
 }
 
+fn include_last_message_snippet_meta(
+    value: serde_json::Value,
+) -> serde_json::Map<String, serde_json::Value> {
+    let mut goose = serde_json::Map::new();
+    goose.insert("includeLastMessageSnippet".to_string(), value);
+
+    let mut meta = serde_json::Map::new();
+    meta.insert("goose".to_string(), serde_json::Value::Object(goose));
+    meta
+}
+
+fn last_message_snippet(session: &SessionInfo) -> Option<&str> {
+    session
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.get("lastMessageSnippet"))
+        .and_then(serde_json::Value::as_str)
+}
+
 #[test]
 fn test_config_mcp() {
     run_test(async { run_config_mcp::<AcpServerConnection>().await });
@@ -132,6 +154,79 @@ fn test_list_sessions() {
 }
 
 #[test]
+fn test_list_sessions_emits_computed_snippet() {
+    run_test(async {
+        let data_root = tempfile::tempdir().unwrap();
+        let cwd = Path::new("/tmp/acp-session-list-snippet");
+        let session_manager = SessionManager::new(data_root.path().to_path_buf());
+        let session = session_manager
+            .create_session(
+                cwd.to_path_buf(),
+                "Live subtitle".to_string(),
+                SessionType::Acp,
+                GooseMode::default(),
+            )
+            .await
+            .unwrap();
+        session_manager
+            .add_message(
+                &session.id,
+                &Message::user().with_text("**raw** _markdown_ subtitle"),
+            )
+            .await
+            .unwrap();
+        session_manager
+            .add_message(
+                &session.id,
+                &Message::assistant()
+                    .with_text("hidden newer text")
+                    .with_metadata(MessageMetadata::agent_only()),
+            )
+            .await
+            .unwrap();
+
+        let conn = new_connection(data_root.path()).await;
+        let response = list_sessions_request(
+            &conn,
+            ListSessionsRequest::new()
+                .meta(include_last_message_snippet_meta(serde_json::Value::Null)),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(response.sessions.len(), 1);
+        assert_eq!(last_message_snippet(&response.sessions[0]), None);
+
+        let response = list_sessions_request(
+            &conn,
+            ListSessionsRequest::new().meta(include_last_message_snippet_meta(
+                serde_json::Value::Bool(false),
+            )),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(response.sessions.len(), 1);
+        assert_eq!(last_message_snippet(&response.sessions[0]), None);
+
+        let response = list_sessions_request(
+            &conn,
+            ListSessionsRequest::new().meta(include_last_message_snippet_meta(
+                serde_json::Value::Bool(true),
+            )),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(response.sessions.len(), 1);
+        assert_eq!(
+            last_message_snippet(&response.sessions[0]),
+            Some("**raw** _markdown_ subtitle")
+        );
+    });
+}
+
+#[test]
 fn test_list_sessions_pagination() {
     run_test(async {
         let data_root = tempfile::tempdir().unwrap();
@@ -142,15 +237,24 @@ fn test_list_sessions_pagination() {
             .await
             .unwrap();
         assert_eq!(first.sessions.len(), 50);
+        assert!(first
+            .sessions
+            .iter()
+            .all(|session| last_message_snippet(session).is_none()));
 
         let second = list_sessions_request(
             &conn,
-            ListSessionsRequest::new().cursor(first.next_cursor.clone().unwrap()),
+            ListSessionsRequest::new()
+                .cursor(first.next_cursor.clone().unwrap())
+                .meta(include_last_message_snippet_meta(serde_json::Value::Bool(
+                    true,
+                ))),
         )
         .await
         .unwrap();
         assert_eq!(second.sessions.len(), 1);
         assert!(second.next_cursor.is_none());
+        assert_eq!(last_message_snippet(&second.sessions[0]), Some("hello"));
 
         let second_id = &second.sessions[0].session_id;
         assert!(first
@@ -296,6 +400,16 @@ fn test_list_sessions_invalid_params() {
         .await
         .unwrap_err();
         assert_invalid_params(error);
+
+        let error = list_sessions_request(
+            &conn,
+            ListSessionsRequest::new().meta(include_last_message_snippet_meta(
+                serde_json::Value::String("true".to_string()),
+            )),
+        )
+        .await
+        .unwrap_err();
+        assert_invalid_params(error);
     });
 }
 
@@ -344,6 +458,7 @@ fn test_get_session_info() {
         assert!(meta.get("createdAt").and_then(|v| v.as_str()).is_some());
         assert_eq!(meta.get("messageCount"), Some(&serde_json::json!(1)));
         assert_eq!(meta.get("userSetName"), Some(&serde_json::json!(false)));
+        assert_eq!(meta.get("sessionType"), Some(&serde_json::json!("acp")));
         assert_eq!(meta.get("hasRecipe"), Some(&serde_json::json!(false)));
     });
 }
@@ -478,6 +593,91 @@ fn test_new_session_returns_initial_config() {
 #[test]
 fn test_new_session_uses_current_config_mode() {
     run_test(async { run_new_session_uses_current_config_mode::<AcpServerConnection>().await });
+}
+
+#[test]
+fn test_new_session_honors_recipe_model_without_recipe_provider() {
+    run_test(async {
+        let data_root = tempfile::tempdir().unwrap();
+        let conn = new_connection(data_root.path()).await;
+        let work_dir = tempfile::tempdir().unwrap();
+        let recipe_model = "gpt-4.1";
+        let recipe = Recipe::builder()
+            .title("Recipe model")
+            .description("A recipe that only overrides the model")
+            .instructions("Use the requested model")
+            .settings(Settings {
+                goose_provider: None,
+                goose_model: Some(recipe_model.to_string()),
+                temperature: None,
+                max_turns: None,
+            })
+            .build()
+            .unwrap();
+        let mut meta = serde_json::Map::new();
+        meta.insert(
+            "recipeDeeplink".to_string(),
+            serde_json::Value::String(recipe_deeplink::encode(&recipe).unwrap()),
+        );
+
+        let response = conn
+            .cx()
+            .send_request(NewSessionRequest::new(work_dir.path()).meta(meta))
+            .block_task()
+            .await
+            .unwrap();
+        let session_info = get_session_info_request(
+            &conn,
+            GetSessionInfoRequest {
+                session_id: response.session_id.0.to_string(),
+            },
+        )
+        .await
+        .unwrap();
+        let meta = session_info
+            .session
+            .meta
+            .expect("session info should include meta");
+
+        assert_eq!(
+            meta.get("modelId").and_then(|v| v.as_str()),
+            Some(recipe_model)
+        );
+        assert_eq!(
+            meta.get("providerId").and_then(|v| v.as_str()),
+            Some("openai")
+        );
+    });
+}
+
+#[test]
+fn test_new_session_cleans_up_when_config_fails() {
+    run_test(async {
+        let data_root = tempfile::tempdir().unwrap();
+        let conn = new_connection(data_root.path()).await;
+        let work_dir = tempfile::tempdir().unwrap();
+        let mut meta = serde_json::Map::new();
+        meta.insert(
+            "enabledExtensions".to_string(),
+            serde_json::Value::String("invalid".to_string()),
+        );
+
+        let error: anyhow::Error = conn
+            .cx()
+            .send_request(NewSessionRequest::new(work_dir.path()).meta(meta))
+            .block_task()
+            .await
+            .unwrap_err()
+            .into();
+
+        assert_invalid_params(error);
+
+        let sessions = SessionManager::new(data_root.path().to_path_buf())
+            .list_all_sessions()
+            .await
+            .unwrap();
+        assert!(sessions.is_empty());
+    });
 }
 
 #[test]
