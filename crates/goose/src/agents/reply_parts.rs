@@ -45,6 +45,14 @@ fn usage_with_timings(
     usage
 }
 
+fn message_has_first_token_content(message: &Message) -> bool {
+    message.content.iter().any(|content| match content {
+        MessageContent::Text(text) => !text.text.is_empty(),
+        MessageContent::Thinking(thinking) => !thinking.thinking.is_empty(),
+        _ => false,
+    })
+}
+
 async fn enhance_model_error(error: ProviderError, provider: &Arc<dyn Provider>) -> ProviderError {
     let ProviderError::RequestFailed(ref msg) = error else {
         return error;
@@ -344,7 +352,9 @@ impl Agent {
                     let (msg_opt, usage_opt) = result?;
 
                     if let Some(msg) = msg_opt {
-                        first_token_at.get_or_insert_with(Instant::now);
+                        if message_has_first_token_content(&msg) {
+                            first_token_at.get_or_insert_with(Instant::now);
+                        }
                         accumulated_message = Some(match accumulated_message {
                             Some(mut prev) => {
                                 for new_content in msg.content {
@@ -388,7 +398,7 @@ impl Agent {
                 while let Some(result) = stream.next().await {
                     let (message, usage) = result?;
 
-                    if message.is_some() {
+                    if message.as_ref().is_some_and(message_has_first_token_content) {
                         first_token_at.get_or_insert_with(Instant::now);
                     }
                     let usage = usage.map(|usage| {
