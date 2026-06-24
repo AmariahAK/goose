@@ -354,7 +354,7 @@ impl Agent {
                     let (msg_opt, usage_opt) = result?;
 
                     if let Some(msg) = msg_opt {
-                        if message_has_first_token_content(&msg) {
+                        if usage_opt.is_none() && message_has_first_token_content(&msg) {
                             first_token_at.get_or_insert_with(Instant::now);
                         }
                         accumulated_message = Some(match accumulated_message {
@@ -400,7 +400,7 @@ impl Agent {
                 while let Some(result) = stream.next().await {
                     let (message, usage) = result?;
 
-                    if message.as_ref().is_some_and(message_has_first_token_content) {
+                    if usage.is_none() && message.as_ref().is_some_and(message_has_first_token_content) {
                         first_token_at.get_or_insert_with(Instant::now);
                     }
                     let usage = usage.map(|usage| {
