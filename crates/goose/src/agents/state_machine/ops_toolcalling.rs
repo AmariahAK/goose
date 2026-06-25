@@ -8,7 +8,7 @@ use rmcp::model::{CallToolResult, Content, ErrorCode, ErrorData, Role};
 
 use crate::agents::agent::{tool_stream, ToolStreamItem};
 use crate::agents::extension_manager::ExtensionManager;
-use crate::agents::state_machine::operation::{Emitter, Operation, TurnOutcome};
+use crate::agents::state_machine::operation::{Emitter, Operation, OperationResult};
 use crate::agents::tool_execution::{ToolCallContext, ToolCallResult};
 use crate::agents::AgentEvent;
 use crate::conversation::message::{Message, MessageContent, ToolRequest};
@@ -55,16 +55,10 @@ impl Operation for ToolExecutionOperation {
         "tool_execution"
     }
 
-    fn applies(&self, session: &Session) -> bool {
-        !pending_tool_requests(session).is_empty()
-    }
-
-    async fn run(&self, session: &Session, emit: Emitter) -> Result<TurnOutcome> {
+    async fn run(&self, session: &Session, emit: Emitter) -> Result<OperationResult> {
         let requests = pending_tool_requests(session);
         if requests.is_empty() {
-            return Err(anyhow!(
-                "ToolExecutionOperation::run with no pending requests"
-            ));
+            return Ok(OperationResult::NotApplicable(emit));
         }
 
         let mut tool_streams = Vec::new();
@@ -153,6 +147,6 @@ impl Operation for ToolExecutionOperation {
         }
 
         emit.emit(AgentEvent::Message(response.clone())).await;
-        Ok(vec![response.into()])
+        Ok(OperationResult::Applied(vec![response.into()]))
     }
 }

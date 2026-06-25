@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use async_trait::async_trait;
 use futures::StreamExt;
 use rmcp::model::{Role, Tool};
 
-use crate::agents::state_machine::operation::{Emitter, Operation, TurnOutcome};
+use crate::agents::state_machine::operation::{Emitter, Operation, OperationResult, TurnOutcome};
 use crate::agents::AgentEvent;
 use crate::conversation::message::Message;
 use crate::conversation::Conversation;
@@ -53,22 +53,14 @@ impl Operation for LlmOperation {
         "llm"
     }
 
-    fn applies(&self, session: &Session) -> bool {
-        matches!(
-            session
-                .conversation
-                .as_ref()
-                .and_then(|c| c.last())
-                .map(|m| &m.role),
-            Some(Role::User)
-        )
-    }
-
-    async fn run(&self, session: &Session, emit: Emitter) -> Result<TurnOutcome> {
+    async fn run(&self, session: &Session, emit: Emitter) -> Result<OperationResult> {
         let conversation = session
             .conversation
             .as_ref()
-            .ok_or_else(|| anyhow!("LlmOperation::run with no conversation"))?;
+            .filter(|c| matches!(c.last().map(|m| &m.role), Some(Role::User)));
+        let Some(conversation) = conversation else {
+            return Ok(OperationResult::NotApplicable(emit));
+        };
 
         let messages_for_provider: Vec<_> = conversation
             .messages()
@@ -90,7 +82,11 @@ impl Operation for LlmOperation {
 
         let mut stream = match stream {
             Ok(stream) => stream,
-            Err(err) => return Ok(self.error_outcome(&err, &emit).await),
+            Err(err) => {
+                return Ok(OperationResult::Applied(
+                    self.error_outcome(&err, &emit).await,
+                ))
+            }
         };
 
         // Conversation::push handles merge logic — coalescing text, merging
@@ -109,7 +105,7 @@ impl Operation for LlmOperation {
                         // assistant turn and append a tagged error message so a
                         // recovery op (or ExitOnError) handles it on the next
                         // iteration. The conversation never keeps a half-turn.
-                        Err(err) => return Ok(self.error_outcome(&err, &emit).await),
+                        Err(err) => return Ok(OperationResult::Applied(self.error_outcome(&err, &emit).await)),
                     };
                     if let Some(chunk) = msg_opt {
                         emit.emit(AgentEvent::Message(chunk.clone())).await;
@@ -119,6 +115,8 @@ impl Operation for LlmOperation {
             }
         }
 
-        Ok(accumulator.into_iter().map(Into::into).collect())
+        Ok(OperationResult::Applied(
+            accumulator.into_iter().map(Into::into).collect(),
+        ))
     }
 }

@@ -359,8 +359,7 @@ impl TestHarness {
         self
     }
 
-    /// Set the session's recorded token total, used by proactive compaction's
-    /// `applies` check.
+    /// Set the session's recorded token total, used by proactive compaction.
     pub async fn set_total_tokens(&self, tokens: i32) {
         self.agent
             .config

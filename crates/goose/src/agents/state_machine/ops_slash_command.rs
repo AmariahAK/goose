@@ -5,7 +5,7 @@ use rmcp::model::Role;
 use crate::agents::execute_commands::{
     command_starts_turn, is_known_slash_command, parse_slash_command, COMPACT_TRIGGERS,
 };
-use crate::agents::state_machine::operation::{Emitter, Operation, TurnEffect, TurnOutcome};
+use crate::agents::state_machine::operation::{Emitter, Operation, OperationResult, TurnEffect};
 use crate::agents::{Agent, AgentEvent};
 use crate::conversation::message::Message;
 use crate::session::Session;
@@ -26,26 +26,24 @@ impl Operation for SlashCommandOperation<'_> {
         "slash_command"
     }
 
-    fn applies(&self, session: &Session) -> bool {
-        let Some(message) = session.conversation.as_ref().and_then(|c| c.last()) else {
-            return false;
-        };
-
-        message.role == Role::User
-            && message.is_agent_visible()
-            && is_known_slash_command(
-                &message.as_concat_text(),
-                Some(session.working_dir.as_path()),
-            )
-    }
-
-    async fn run(&self, session: &Session, emit: Emitter) -> Result<TurnOutcome> {
-        let user_message = session
+    async fn run(&self, session: &Session, emit: Emitter) -> Result<OperationResult> {
+        let Some(user_message) = session
             .conversation
             .as_ref()
             .and_then(|c| c.last())
+            .filter(|message| {
+                message.role == Role::User
+                    && message.is_agent_visible()
+                    && is_known_slash_command(
+                        &message.as_concat_text(),
+                        Some(session.working_dir.as_path()),
+                    )
+            })
             .cloned()
-            .ok_or_else(|| anyhow!("Slash command operation ran without a conversation tail"))?;
+        else {
+            return Ok(OperationResult::NotApplicable(emit));
+        };
+
         let message_id = user_message
             .id
             .clone()
@@ -60,7 +58,7 @@ impl Operation for SlashCommandOperation<'_> {
                     .with_text(e.to_string())
                     .with_visibility(true, false);
                 emit.emit(AgentEvent::Message(error_message.clone())).await;
-                Ok(vec![
+                Ok(OperationResult::Applied(vec![
                     TurnEffect::SetMessageVisibility {
                         message_id,
                         user_visible: true,
@@ -68,7 +66,7 @@ impl Operation for SlashCommandOperation<'_> {
                     },
                     error_message.into(),
                     TurnEffect::YieldToClient,
-                ])
+                ]))
             }
             Ok(Some(response)) if response.role == Role::Assistant => {
                 let mut effects = Vec::new();
@@ -107,17 +105,17 @@ impl Operation for SlashCommandOperation<'_> {
                     effects.push(TurnEffect::YieldToClient);
                 }
 
-                Ok(effects)
+                Ok(OperationResult::Applied(effects))
             }
-            Ok(Some(resolved_message)) => Ok(vec![
+            Ok(Some(resolved_message)) => Ok(OperationResult::Applied(vec![
                 TurnEffect::SetMessageVisibility {
                     message_id,
                     user_visible: true,
                     agent_visible: false,
                 },
                 resolved_message.with_visibility(false, true).into(),
-            ]),
-            Ok(None) => Ok(vec![]),
+            ])),
+            Ok(None) => Ok(OperationResult::NotApplicable(emit)),
         }
     }
 }

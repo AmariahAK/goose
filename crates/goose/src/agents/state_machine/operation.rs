@@ -8,18 +8,22 @@ use crate::conversation::message::Message;
 use crate::conversation::Conversation;
 use crate::session::Session;
 
-/// One step in the agent loop. The first op whose `applies` returns true
-/// gets to `run` — it streams events via the emitter and returns an outcome.
+/// One step in the agent loop. Each op gets a chance to interpret the
+/// conversation state. It either returns the emitter untouched, or streams
+/// events and returns effects for the machine to apply.
 #[async_trait]
 pub trait Operation: Send + Sync {
     fn name(&self) -> &'static str;
 
-    fn applies(&self, session: &Session) -> bool;
-
-    async fn run(&self, session: &Session, emit: Emitter) -> Result<TurnOutcome>;
+    async fn run(&self, session: &Session, emit: Emitter) -> Result<OperationResult>;
 }
 
 pub type TurnOutcome = Vec<TurnEffect>;
+
+pub enum OperationResult {
+    NotApplicable(Emitter),
+    Applied(TurnOutcome),
+}
 
 /// One action the machine applies after an operation finishes.
 pub enum TurnEffect {

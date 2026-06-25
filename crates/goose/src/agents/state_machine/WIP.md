@@ -33,7 +33,7 @@ state_machine/
 ## Current status
 
 - [x] `GOOSE_STATE_MACHINE=1` flag dispatch from `Agent::reply`
-- [x] `Operation` trait with `applies(&Session)` + `run(&Session, Emitter) -> TurnOutcome`
+- [x] `Operation` trait with `run(&Session, Emitter) -> OperationResult`
 - [x] Streaming `LlmOperation` with tools (model can emit `ToolRequest`s)
 - [x] `ToolExecutionOperation` — bare execute-and-respond (no approval/frontend/chat-mode)
 - [x] `MaxTurnsOperation` — halts the loop after `max_turns` assistant turns this request
@@ -58,16 +58,21 @@ state_machine/
 #[async_trait]
 pub trait Operation: Send + Sync {
     fn name(&self) -> &'static str;
-    fn applies(&self, session: &Session) -> bool;
-    async fn run(&self, session: &Session, emit: Emitter) -> Result<TurnOutcome>;
+    async fn run(&self, session: &Session, emit: Emitter) -> Result<OperationResult>;
+}
+
+pub enum OperationResult {
+    NotApplicable(Emitter),
+    Applied(TurnOutcome),
 }
 ```
 
 Ops take `&Session` (read-only — the conversation IS the state) and an
 `Emitter`. The `Emitter` is the op's handle to the machine: it carries a
 sender for `AgentEvent`s the client should see in real time, and a
-`CancellationToken`. Ops stream 0+ events through the emitter and return one
-`TurnOutcome`.
+`CancellationToken`. Ops inspect the session and either return
+`NotApplicable(Emitter)` without emitting, or stream 0+ events through the
+emitter and return `Applied(TurnOutcome)`.
 
 Long-running, streaming ops `select!` on `emit.cancelled()`. On cancel they
 commit whatever they fully produced (via the normal `AppendMessages`) and
@@ -108,8 +113,8 @@ mode in a new shape: a hand-maintained mirror that can drift from disk. It
 already would have drifted, because `add_message` assigns a message id when
 one is missing, so a pushed-but-not-reloaded message differs from its
 persisted form. The reload costs one small indexed DB read per turn —
-negligible next to an LLM call — and guarantees `applies`/`run` see exactly
-the persisted state (ids assigned, stored order).
+negligible next to an LLM call — and guarantees every op sees exactly the
+persisted state (ids assigned, stored order).
 
 Construction-time dependencies (providers, system prompts, extension
 managers, per-call knobs like `max_turns`) are passed to the op's
@@ -147,12 +152,12 @@ The driver (`machine::reply`) is the only place that:
 
 - persists messages and conversations via `SessionManager`
 - mutates `session` (push to conversation, replace, future field updates)
-- runs the `applies`/`run` loop
+- runs the operation loop
 - turns ops' emitted events into the client `AgentEvent` stream
 - forwards `HistoryReplaced` on `ReplaceConversation`
 
-Loop termination: either an op returns `YieldToClient`, or no op applies
-(every op's `applies` returned false).
+Loop termination: either an applied op returns `YieldToClient`, or every op
+returns `NotApplicable`.
 
 ---
 
@@ -161,9 +166,9 @@ Loop termination: either an op returns `YieldToClient`, or no op applies
 Not everything the machine does is an operation. There are two categories:
 
 1. **Turns** — operations the loop runs *sequentially*: each reads the
-   conversation and returns a `TurnOutcome` the machine awaits before
-   continuing. The LLM call, tool execution, compaction, etc. These are
-   selected by `applies` every iteration and are the substance of the loop.
+   conversation and returns `Applied(TurnOutcome)` when it owns the current
+   state. The LLM call, tool execution, compaction, etc. These are tried in
+   order every iteration and are the substance of the loop.
 
 2. **Out-of-band side effects** — concurrent, conversation-independent,
    fire-and-forget work triggered at reply *boundaries*. They run alongside
@@ -183,8 +188,8 @@ deliberately *not* an operation:
   costume).
 - Its output is **not a `TurnOutcome`** — it touches no message, only a
   session metadata field plus a UI side-channel.
-- It is **once-per-reply**, not once-per-turn, so re-evaluating `applies`
-  every iteration is the wrong model and would need a "did I run" flag — the
+- It is **once-per-reply**, not once-per-turn, so trying it every iteration is
+  the wrong model and would need a "did I run" flag — the
   cross-iteration state we are trying to eliminate.
 
 The boundary matters for what comes next: **tool-pair compaction** is a
@@ -203,7 +208,7 @@ Roughly in order of value, with the code in `agents/agent.rs` they replace:
 |---|---|---|
 | **LLM** | `stream_response_from_provider` + the main `while let Some(next) = stream.next()` arms | **Landed.** Streams the response with the real `tools` list, so the model can emit `ToolRequest`s. Persists the assistant message (requests + thinking/reasoning) as-is. Constructor: `(Arc<dyn Provider>, system_prompt, tools)`. |
 | **Tool approval** | `tool_inspection_manager.inspect_tools` + `process_inspection_results_with_permission_inspector` + `handle_approval_tool_requests` | Not started. Annotates `ToolRequest`s with approval state. YOLO short-circuits. Approval is a **separate op** that runs *before* execution; the state lives on the request in the conversation, not in a side map. |
-| **Tool execution** | `handle_approved_and_denied_tools` + `combined.next()` `tokio::select!` loop + frontend tool sub-flow | **Landed (bare path only).** `applies` when the last message is an assistant message with parseable tool requests. Dispatches each via `dispatch_tool_call`, drains streams forwarding `McpNotification`s, collects responses into one user message, `AppendMessages`. On cancel: cancels the dispatch token and synthesizes interrupted-tool responses so the committed tail is valid. Constructor: `(&Agent)`. **Deferred:** approval/inspection, frontend tools, chat-mode skip, the elicitation/100ms-tick drain loop, `MANAGE_EXTENSIONS`/`tools_updated`, unparseable-tool-call error path. |
+| **Tool execution** | `handle_approved_and_denied_tools` + `combined.next()` `tokio::select!` loop + frontend tool sub-flow | **Landed (bare path only).** Applies when the last message is an assistant message with parseable tool requests. Dispatches each via `dispatch_tool_call`, drains streams forwarding `McpNotification`s, collects responses into one user message, `AppendMessages`. On cancel: cancels the dispatch token and synthesizes interrupted-tool responses so the committed tail is valid. Constructor: `(&Agent)`. **Deferred:** approval/inspection, frontend tools, chat-mode skip, the elicitation/100ms-tick drain loop, `MANAGE_EXTENSIONS`/`tools_updated`, unparseable-tool-call error path. |
 | **Compaction** | `check_if_compaction_needed` block + `ContextLengthExceeded` arm in `reply()` | **Landed (proactive + reactive).** Proactive: cheap synchronous ratio check (`session.total_tokens` vs model context limit, both captured at construction) when the last message is a pending user prompt. Reactive: when the tail is a `ContextLengthExceeded` error message (the LLM op appends one instead of bubbling), compact-and-retry up to `MAX_CONTEXT_ERROR_RETRIES`, counted from the conversation. `run` strips the trailing error before summarizing. The machine clears `total_tokens` after a replace so it can't re-trigger on a stale count. Constructor: `(Arc<dyn Provider>)`. **Deferred:** per-compaction usage metrics. |
 
 ### Errors as conversation state
@@ -288,7 +293,7 @@ the error and retry with a new message. This replaces the old fire-and-forget
   has no handle on it, can't cancel it, and can't wait for it. A cleaner
   model: let an op return `TurnOutcome::RunningInBackground(JoinHandle<...>)`.
   The machine keeps these handles in a set, continues the loop immediately,
-  and at termination (`YieldToClient` / no-op-applies / cancel) either
+  and at termination (`YieldToClient` / no-op-applied / cancel) either
   **awaits** them (work that must finish, e.g. flush a summary) or
   **aborts** them (cancel). This brings background work back under the
   machine's lifecycle: cancellation cleanup becomes uniform (the machine

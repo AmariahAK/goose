@@ -7,7 +7,9 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use crate::agents::agent::DEFAULT_MAX_TURNS;
-use crate::agents::state_machine::operation::{Emitter, Operation, TurnEffect, TurnOutcome};
+use crate::agents::state_machine::operation::{
+    Emitter, Operation, OperationResult, TurnEffect, TurnOutcome,
+};
 use crate::agents::state_machine::ops_compaction::CompactionOperation;
 use crate::agents::state_machine::ops_exit_on_error::ExitOnErrorOperation;
 use crate::agents::state_machine::ops_llm::LlmOperation;
@@ -106,17 +108,15 @@ pub async fn reply(
                 .get_session(&session_id, true)
                 .await?;
 
-            let Some(op) = operations.iter().find(|op| op.applies(&session)).cloned() else {
-                break;
-            };
-            tracing::debug!(target: "goose::state_machine", op = op.name(), "running operation");
-
             let (tx, mut rx) = mpsc::channel::<AgentEvent>(32);
-            let emitter = Emitter::new(tx, cancel.clone());
+            let mut emitter = Some(Emitter::new(tx, cancel.clone()));
+            let mut outcome: Option<TurnOutcome> = None;
 
-            let outcome: TurnOutcome = {
-                let op_fut = op.run(&session, emitter);
+            for op in &operations {
+                let emit = emitter.take().expect("emitter should be returned by skipped ops");
+                let op_fut = op.run(&session, emit);
                 tokio::pin!(op_fut);
+
                 let result = loop {
                     tokio::select! {
                         biased;
@@ -124,7 +124,23 @@ pub async fn reply(
                         result = &mut op_fut => break result,
                     }
                 };
-                result?
+
+                match result? {
+                    OperationResult::NotApplicable(emit) => {
+                        emitter = Some(emit);
+                    }
+                    OperationResult::Applied(effects) => {
+                        tracing::debug!(target: "goose::state_machine", op = op.name(), "applied operation");
+                        outcome = Some(effects);
+                        break;
+                    }
+                }
+            }
+
+            drop(emitter);
+
+            let Some(outcome) = outcome else {
+                break;
             };
 
             // Op returned; its Emitter dropped; channel closed. Drain leftovers.

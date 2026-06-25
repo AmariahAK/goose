@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use async_trait::async_trait;
 
-use crate::agents::state_machine::operation::{Emitter, Operation, TurnEffect, TurnOutcome};
+use crate::agents::state_machine::operation::{Emitter, Operation, OperationResult, TurnEffect};
 use crate::agents::AgentEvent;
 use crate::config::Config;
 use crate::context_mgmt::{compact_messages, DEFAULT_COMPACTION_THRESHOLD};
@@ -40,9 +40,9 @@ fn context_error_count(conversation: &Conversation) -> usize {
 /// auto-compact threshold, before handing off to the LLM. Replaces the
 /// `check_if_compaction_needed` / `compact_messages` block in `Agent::reply`.
 ///
-/// `applies` does the cheap synchronous ratio check using the session's
-/// recorded token total against the model's context limit (both known at
-/// construction). When the token total is unknown the op stays out of the way —
+/// The op does the cheap synchronous ratio check using the session's recorded
+/// token total against the model's context limit (both known at construction).
+/// When the token total is unknown the op stays out of the way —
 /// proactive compaction is best-effort, and the reactive `ContextLengthExceeded`
 /// path remains the backstop.
 pub struct CompactionOperation {
@@ -83,57 +83,51 @@ impl Operation for CompactionOperation {
         "compaction"
     }
 
-    fn applies(&self, session: &Session) -> bool {
+    async fn run(&self, session: &Session, emit: Emitter) -> Result<OperationResult> {
         if self.manages_own_context {
-            return false;
+            return Ok(OperationResult::NotApplicable(emit));
         }
         let Some(conversation) = session.conversation.as_ref() else {
-            return false;
+            return Ok(OperationResult::NotApplicable(emit));
         };
+
+        let reactive_context_error = matches!(
+            conversation.last().and_then(|m| m.error_kind()),
+            Some(MessageErrorKind::ContextLengthExceeded)
+        );
 
         // Reactive: the LLM op just appended a ContextLengthExceeded error.
         // Compact and retry, up to a cap, before letting ExitOnError take it.
-        if matches!(
-            conversation.last().and_then(|m| m.error_kind()),
-            Some(MessageErrorKind::ContextLengthExceeded)
-        ) {
-            return context_error_count(conversation) <= MAX_CONTEXT_ERROR_RETRIES;
+        if reactive_context_error {
+            if context_error_count(conversation) > MAX_CONTEXT_ERROR_RETRIES {
+                return Ok(OperationResult::NotApplicable(emit));
+            }
+        } else {
+            // Proactive: a pending user turn whose recorded token total is over the
+            // threshold. We compact before the doomed LLM call rather than after.
+            let last_is_user = conversation
+                .last()
+                .map(|m| m.role == rmcp::model::Role::User && !m.is_tool_response())
+                .unwrap_or(false);
+            if !last_is_user {
+                return Ok(OperationResult::NotApplicable(emit));
+            }
+            match session.usage.total_tokens {
+                Some(tokens) if tokens > 0 && self.over_threshold(tokens as usize) => {}
+                _ => return Ok(OperationResult::NotApplicable(emit)),
+            }
         }
-
-        // Proactive: a pending user turn whose recorded token total is over the
-        // threshold. We compact before the doomed LLM call rather than after.
-        let last_is_user = conversation
-            .last()
-            .map(|m| m.role == rmcp::model::Role::User && !m.is_tool_response())
-            .unwrap_or(false);
-        if !last_is_user {
-            return false;
-        }
-        match session.usage.total_tokens {
-            Some(tokens) if tokens > 0 => self.over_threshold(tokens as usize),
-            _ => false,
-        }
-    }
-
-    async fn run(&self, session: &Session, emit: Emitter) -> Result<TurnOutcome> {
-        let full = session
-            .conversation
-            .as_ref()
-            .ok_or_else(|| anyhow!("CompactionOperation::run with no conversation"))?;
 
         // In the reactive case the conversation ends in an error message that we
         // must not feed into the summary; compact everything before it.
         let trimmed;
-        let conversation = if matches!(
-            full.last().and_then(|m| m.error_kind()),
-            Some(MessageErrorKind::ContextLengthExceeded)
-        ) {
-            let mut messages = full.messages().to_vec();
+        let conversation = if reactive_context_error {
+            let mut messages = conversation.messages().to_vec();
             messages.pop();
             trimmed = Conversation::new_unvalidated(messages);
             &trimmed
         } else {
-            full
+            conversation
         };
 
         let threshold_percentage = (self.threshold * 100.0) as u32;
@@ -172,7 +166,7 @@ impl Operation for CompactionOperation {
                     ),
                 ))
                 .await;
-                Ok(vec![compacted.into()])
+                Ok(OperationResult::Applied(vec![compacted.into()]))
             }
             Err(e) => {
                 emit.emit(AgentEvent::Message(Message::assistant().with_text(
@@ -182,7 +176,7 @@ impl Operation for CompactionOperation {
                     ),
                 )))
                 .await;
-                Ok(vec![TurnEffect::YieldToClient])
+                Ok(OperationResult::Applied(vec![TurnEffect::YieldToClient]))
             }
         }
     }

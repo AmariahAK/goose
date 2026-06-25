@@ -2,7 +2,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use rmcp::model::Role;
 
-use crate::agents::state_machine::operation::{Emitter, Operation, TurnEffect, TurnOutcome};
+use crate::agents::state_machine::operation::{Emitter, Operation, OperationResult, TurnEffect};
 use crate::agents::AgentEvent;
 use crate::conversation::message::Message;
 use crate::session::Session;
@@ -42,16 +42,16 @@ impl Operation for MaxTurnsOperation {
         "max_turns"
     }
 
-    fn applies(&self, session: &Session) -> bool {
-        turns_taken_this_request(session) >= self.max_turns
-    }
+    async fn run(&self, session: &Session, emit: Emitter) -> Result<OperationResult> {
+        if turns_taken_this_request(session) < self.max_turns {
+            return Ok(OperationResult::NotApplicable(emit));
+        }
 
-    async fn run(&self, _session: &Session, emit: Emitter) -> Result<TurnOutcome> {
         let message = Message::assistant().with_text(
             "I've reached the maximum number of actions I can do without user input. \
              Would you like me to continue?",
         );
         emit.emit(AgentEvent::Message(message)).await;
-        Ok(vec![TurnEffect::YieldToClient])
+        Ok(OperationResult::Applied(vec![TurnEffect::YieldToClient]))
     }
 }
