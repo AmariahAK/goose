@@ -23,7 +23,7 @@ use std::sync::{Arc, LazyLock};
 use tracing::{info, warn};
 use utoipa::ToSchema;
 
-pub const CURRENT_SCHEMA_VERSION: i32 = 14;
+pub const CURRENT_SCHEMA_VERSION: i32 = 15;
 pub const SESSIONS_FOLDER: &str = "sessions";
 pub const DB_NAME: &str = "sessions.db";
 const MILLISECOND_TIMESTAMP_THRESHOLD: i64 = 10_000_000_000;
@@ -92,6 +92,8 @@ pub struct Session {
     #[serde(default)]
     pub project_id: Option<String>,
     #[serde(default)]
+    pub system_prompt: Option<String>,
+    #[serde(default)]
     pub last_message_snippet: Option<String>,
 }
 
@@ -139,6 +141,7 @@ pub struct SessionUpdateBuilder<'a> {
     archived_at: Option<Option<DateTime<Utc>>>,
 
     project_id: Option<Option<String>>,
+    system_prompt: Option<Option<String>>,
 }
 
 #[derive(Serialize, ToSchema, Debug)]
@@ -169,6 +172,7 @@ impl<'a> SessionUpdateBuilder<'a> {
             goose_mode: None,
             archived_at: None,
             project_id: None,
+            system_prompt: None,
         }
     }
 
@@ -269,6 +273,11 @@ impl<'a> SessionUpdateBuilder<'a> {
 
     pub fn project_id(mut self, project_id: Option<String>) -> Self {
         self.project_id = Some(project_id);
+        self
+    }
+
+    pub fn system_prompt(mut self, system_prompt: Option<String>) -> Self {
+        self.system_prompt = Some(system_prompt);
         self
     }
 }
@@ -648,6 +657,7 @@ impl Default for Session {
             goose_mode: GooseMode::default(),
             archived_at: None,
             project_id: None,
+            system_prompt: None,
             last_message_snippet: None,
         }
     }
@@ -742,6 +752,7 @@ impl sqlx::FromRow<'_, sqlx::sqlite::SqliteRow> for Session {
                 .unwrap_or_default(),
             archived_at: row.try_get("archived_at").ok(),
             project_id: row.try_get("project_id").ok().flatten(),
+            system_prompt: row.try_get("system_prompt").ok().flatten(),
             last_message_snippet: None,
         })
     }
@@ -864,7 +875,8 @@ impl SessionStorage {
                 model_config_json TEXT,
                 goose_mode TEXT NOT NULL DEFAULT 'auto',
                 archived_at TIMESTAMP,
-                project_id TEXT
+                project_id TEXT,
+                system_prompt TEXT
             )
         "#,
         )
@@ -1326,6 +1338,11 @@ impl SessionStorage {
                     }
                 }
             }
+            15 => {
+                sqlx::query("ALTER TABLE sessions ADD COLUMN system_prompt TEXT")
+                    .execute(&mut **tx)
+                    .await?;
+            }
             _ => {
                 anyhow::bail!("Unknown migration version: {}", version);
             }
@@ -1470,6 +1487,7 @@ impl SessionStorage {
         add_update!(builder.archived_at, "archived_at");
 
         add_update!(builder.project_id, "project_id");
+        add_update!(builder.system_prompt, "system_prompt");
 
         if updates.is_empty() {
             return Ok(());
@@ -1545,6 +1563,9 @@ impl SessionStorage {
 
         if let Some(ref project_id) = builder.project_id {
             q = q.bind(project_id.as_ref());
+        }
+        if let Some(ref system_prompt) = builder.system_prompt {
+            q = q.bind(system_prompt.as_ref());
         }
 
         let pool = self.pool().await?;
