@@ -138,8 +138,13 @@ export default function MCPUIResourceRenderer({
   const intl = useIntl();
   const { resolvedTheme } = useTheme();
   const [proxyUrl, setProxyUrl] = useState<string | undefined>(undefined);
+  const backendAcpOnly = window.appConfig.get('GOOSE_BACKEND_ACP_ONLY') === true;
 
   useEffect(() => {
+    if (backendAcpOnly) {
+      return;
+    }
+
     const fetchProxyUrl = async () => {
       try {
         const gooseApiHost = await window.electron.getGoosedHostPort();
@@ -147,7 +152,7 @@ export default function MCPUIResourceRenderer({
         if (gooseApiHost && secretKey) {
           setProxyUrl(`${gooseApiHost}/mcp-ui-proxy?secret=${encodeURIComponent(secretKey)}`);
         } else {
-          console.error('Failed to get goosed host/port or secret key');
+          console.error('Failed to get REST backend host/port or secret key');
         }
       } catch (error) {
         console.error('Error fetching MCP-UI Proxy URL:', error);
@@ -155,7 +160,7 @@ export default function MCPUIResourceRenderer({
     };
 
     fetchProxyUrl().catch(console.error);
-  }, []);
+  }, [backendAcpOnly]);
 
   const handleUIAction = async (actionEvent: UIActionResult): Promise<UIActionHandlerResult> => {
     // result to pass back to the MCP-UI

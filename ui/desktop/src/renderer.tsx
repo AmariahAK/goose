@@ -36,18 +36,21 @@ function handleIntlError(err: { code: string; message?: string }) {
   const isLauncher = window.location.hash === '#/launcher';
 
   if (!isLauncher) {
-    const gooseApiHost = await window.electron.getGoosedHostPort();
-    if (gooseApiHost === null) {
-      window.alert('failed to start goose backend process');
-      return;
+    const backendAcpOnly = window.appConfig.get('GOOSE_BACKEND_ACP_ONLY') === true;
+    if (!backendAcpOnly) {
+      const gooseApiHost = await window.electron.getGoosedHostPort();
+      if (gooseApiHost === null) {
+        window.alert('failed to start goose backend process');
+        return;
+      }
+      client.setConfig({
+        baseUrl: gooseApiHost,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Secret-Key': await window.electron.getSecretKey(),
+        },
+      });
     }
-    client.setConfig({
-      baseUrl: gooseApiHost,
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Secret-Key': await window.electron.getSecretKey(),
-      },
-    });
 
     try {
       const telemetryValue = await acpReadConfig(TELEMETRY_CONFIG_KEY, false);

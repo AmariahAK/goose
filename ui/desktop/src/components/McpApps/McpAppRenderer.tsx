@@ -27,6 +27,7 @@ import type { CallToolResult, JSONRPCRequest, Tool } from '@modelcontextprotocol
 import { GripHorizontal, Maximize2, PictureInPicture2, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { callMcpAppTool, readMcpAppResource } from '../../acp/mcp-apps';
+import { httpOriginFromAcpWebSocketUrl } from '../../acp/url';
 import { getCachedTools } from './toolsCache';
 import { AppEvents } from '../../constants/events';
 import { useTheme } from '../../contexts/ThemeContext';
@@ -175,31 +176,31 @@ function getContainerDimensions(
 
 async function fetchMcpAppProxyUrl(csp: McpUiResourceCsp | null): Promise<string | null> {
   try {
-    const baseUrl = await window.electron.getGoosedHostPort();
+    const acpUrl = await window.electron.getAcpUrl();
     const secretKey = await window.electron.getSecretKey();
 
-    if (!baseUrl || !secretKey) {
-      console.error('[McpAppRenderer] Failed to get goosed host/port or secret key');
+    if (!acpUrl || !secretKey) {
+      console.error('[McpAppRenderer] Failed to get ACP URL or secret key');
       return null;
     }
 
-    const params = new URLSearchParams();
-    params.set('secret', secretKey);
+    const proxyUrl = new URL('/mcp-app-proxy', httpOriginFromAcpWebSocketUrl(acpUrl));
+    proxyUrl.searchParams.set('secret', secretKey);
 
     if (csp?.connectDomains?.length) {
-      params.set('connect_domains', csp.connectDomains.join(','));
+      proxyUrl.searchParams.set('connect_domains', csp.connectDomains.join(','));
     }
     if (csp?.resourceDomains?.length) {
-      params.set('resource_domains', csp.resourceDomains.join(','));
+      proxyUrl.searchParams.set('resource_domains', csp.resourceDomains.join(','));
     }
     if (csp?.frameDomains?.length) {
-      params.set('frame_domains', csp.frameDomains.join(','));
+      proxyUrl.searchParams.set('frame_domains', csp.frameDomains.join(','));
     }
     if (csp?.baseUriDomains?.length) {
-      params.set('base_uri_domains', csp.baseUriDomains.join(','));
+      proxyUrl.searchParams.set('base_uri_domains', csp.baseUriDomains.join(','));
     }
 
-    return `${baseUrl}/mcp-app-proxy?${params.toString()}`;
+    return proxyUrl.toString();
   } catch (error) {
     console.error('[McpAppRenderer] Error fetching MCP App Proxy URL:', error);
     return null;
@@ -415,15 +416,20 @@ export default function McpAppRenderer({
 
   const effectiveInlineHeight = iframeHeight || DEFAULT_IFRAME_HEIGHT;
 
+  const backendAcpOnly = window.appConfig.get('GOOSE_BACKEND_ACP_ONLY') === true;
   const [containerWidth, setContainerWidth] = useState<number>(0);
   const [containerHeight, setContainerHeight] = useState<number>(0);
-  const [apiHost, setApiHost] = useState<string | null>(null);
+  const [restApiHost, setRestApiHost] = useState<string | null>(null);
   const [secretKey, setSecretKey] = useState<string | null>(null);
 
   useEffect(() => {
-    window.electron.getGoosedHostPort().then(setApiHost);
+    if (backendAcpOnly) {
+      return;
+    }
+
+    window.electron.getGoosedHostPort().then(setRestApiHost);
     window.electron.getSecretKey().then(setSecretKey);
-  }, []);
+  }, [backendAcpOnly]);
 
   // Fetch the resource from the extension to get HTML and metadata (CSP, permissions, etc.).
   // If cachedHtml is provided we show it immediately; the fetch updates metadata and
@@ -675,12 +681,15 @@ export default function McpAppRenderer({
   const handleFallbackRequest = useCallback(
     async (request: JSONRPCRequest, _extra: RequestHandlerExtra) => {
       if (request.method === 'sampling/createMessage') {
-        if (!sessionId || !apiHost || !secretKey) {
+        if (backendAcpOnly) {
+          throw new Error('Sampling fallback is not available in direct ACP mode');
+        }
+        if (!sessionId || !restApiHost || !secretKey) {
           throw new Error('Session not initialized for sampling request');
         }
         const { messages, systemPrompt, maxTokens } =
           request.params as unknown as SamplingCreateMessageParams;
-        const response = await fetch(`${apiHost}/sessions/${sessionId}/sampling/message`, {
+        const response = await fetch(`${restApiHost}/sessions/${sessionId}/sampling/message`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -705,7 +714,7 @@ export default function McpAppRenderer({
         message: `Unhandled JSON-RPC method: ${request.method ?? '<unknown>'}`,
       };
     },
-    [sessionId, apiHost, secretKey]
+    [backendAcpOnly, sessionId, restApiHost, secretKey]
   );
 
   const handleError = useCallback((err: Error) => {
