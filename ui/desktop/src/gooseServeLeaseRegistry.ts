@@ -1,0 +1,139 @@
+import type { GooseServeResult, Logger } from './gooseServe';
+
+export const GOOSE_SERVE_EXITED_USER_MESSAGE =
+  "This window's Goose backend stopped. Close this window and open a new chat to start a new backend. If this keeps happening, restart Goose Desktop.";
+
+export interface GooseServeLease {
+  acpUrl: string;
+  cleanup: () => Promise<void>;
+  windowIds: Set<number>;
+  cleanedUp: boolean;
+  exited: boolean;
+  exitCode: number | null;
+  exitSignal: NodeJS.Signals | null;
+  exitError?: string;
+}
+
+export class GooseServeLeaseRegistry {
+  private leasesByWindowId = new Map<number, GooseServeLease>();
+
+  constructor(private readonly logger: Logger) {}
+
+  create(result: GooseServeResult): GooseServeLease {
+    const exitDetails = result.getExitDetails();
+    const lease: GooseServeLease = {
+      acpUrl: result.acpUrl,
+      cleanup: result.cleanup,
+      windowIds: new Set<number>(),
+      cleanedUp: false,
+      exited: result.hasExited(),
+      exitCode: exitDetails.code,
+      exitSignal: exitDetails.signal,
+    };
+
+    const markExited = ({
+      code,
+      signal,
+      error,
+    }: {
+      code?: number | null;
+      signal?: NodeJS.Signals | null;
+      error?: Error;
+    }) => {
+      const firstExit = !lease.exited;
+      lease.exited = true;
+      if (code !== undefined) {
+        lease.exitCode = code;
+      }
+      if (signal !== undefined) {
+        lease.exitSignal = signal;
+      }
+      if (error) {
+        lease.exitError = error.message;
+      }
+
+      if (firstExit && !lease.cleanedUp) {
+        this.logger.error('Goose ACP server exited unexpectedly', {
+          code: lease.exitCode,
+          signal: lease.exitSignal,
+          error: lease.exitError,
+          windowIds: [...lease.windowIds],
+        });
+      }
+    };
+
+    result.process.once('exit', (code, signal) => {
+      markExited({ code, signal });
+    });
+
+    result.process.once('error', (error) => {
+      markExited({ error });
+    });
+
+    return lease;
+  }
+
+  get(windowId: number): GooseServeLease | null {
+    return this.leasesByWindowId.get(windowId) ?? null;
+  }
+
+  getAcpUrl(windowId: number): string | null {
+    const lease = this.get(windowId);
+    if (!lease) {
+      return null;
+    }
+    if (lease.exited) {
+      throw new Error(GOOSE_SERVE_EXITED_USER_MESSAGE);
+    }
+    return lease.acpUrl;
+  }
+
+  attachWindow(windowId: number, lease: GooseServeLease) {
+    lease.windowIds.add(windowId);
+    this.leasesByWindowId.set(windowId, lease);
+  }
+
+  async releaseWindow(windowId: number) {
+    const lease = this.leasesByWindowId.get(windowId);
+    this.leasesByWindowId.delete(windowId);
+
+    if (!lease) {
+      return;
+    }
+
+    lease.windowIds.delete(windowId);
+    if (lease.windowIds.size === 0) {
+      await this.cleanupLease(lease);
+    }
+  }
+
+  async cleanupLease(lease: GooseServeLease) {
+    if (lease.cleanedUp) {
+      return;
+    }
+
+    lease.cleanedUp = true;
+    for (const windowId of lease.windowIds) {
+      this.leasesByWindowId.delete(windowId);
+    }
+    lease.windowIds.clear();
+
+    try {
+      await lease.cleanup();
+    } catch (error) {
+      this.logger.error('Failed to cleanup goose serve backend:', error);
+    }
+  }
+
+  activeLeaseCount(): number {
+    return this.uniqueLeases().length;
+  }
+
+  async cleanupAll() {
+    await Promise.all(this.uniqueLeases().map((lease) => this.cleanupLease(lease)));
+  }
+
+  private uniqueLeases(): GooseServeLease[] {
+    return [...new Set(this.leasesByWindowId.values())];
+  }
+}

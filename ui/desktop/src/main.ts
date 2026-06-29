@@ -28,6 +28,7 @@ import 'dotenv/config';
 import { checkServerStatus } from './goosed';
 import { startGoosed } from './goosed';
 import { startGooseServe } from './gooseServe';
+import { GooseServeLeaseRegistry, type GooseServeLease } from './gooseServeLease';
 import { createClient, createConfig } from './api/client';
 import { expandTilde } from './utils/pathUtils';
 import log from './utils/logger';
@@ -833,13 +834,6 @@ const windowMap = new Map<number, BrowserWindow>();
 const goosedClients = new Map<number, Client>();
 const appWindows = new Map<string, BrowserWindow>();
 
-interface GooseServeLease {
-  acpUrl: string;
-  cleanup: () => Promise<void>;
-  windowIds: Set<number>;
-  cleanedUp: boolean;
-}
-
 interface GoosedLease {
   client: Client;
   cleanup: () => Promise<void>;
@@ -848,7 +842,7 @@ interface GoosedLease {
 }
 
 const goosedLeasesByWindowId = new Map<number, GoosedLease>();
-const gooseServeLeasesByWindowId = new Map<number, GooseServeLease>();
+const gooseServeLeases = new GooseServeLeaseRegistry(log);
 
 const cleanupGoosedLease = async (lease: GoosedLease) => {
   if (lease.cleanedUp) {
@@ -887,43 +881,6 @@ const releaseWindowGoosedLease = async (windowId: number) => {
   lease.windowIds.delete(windowId);
   if (lease.windowIds.size === 0) {
     await cleanupGoosedLease(lease);
-  }
-};
-
-const cleanupGooseServeLease = async (lease: GooseServeLease) => {
-  if (lease.cleanedUp) {
-    return;
-  }
-
-  lease.cleanedUp = true;
-  for (const windowId of lease.windowIds) {
-    gooseServeLeasesByWindowId.delete(windowId);
-  }
-  lease.windowIds.clear();
-
-  try {
-    await lease.cleanup();
-  } catch (error) {
-    log.error('Failed to cleanup goose serve backend:', error);
-  }
-};
-
-const attachWindowToGooseServeLease = (windowId: number, lease: GooseServeLease) => {
-  lease.windowIds.add(windowId);
-  gooseServeLeasesByWindowId.set(windowId, lease);
-};
-
-const releaseWindowGooseServeLease = async (windowId: number) => {
-  const lease = gooseServeLeasesByWindowId.get(windowId);
-  gooseServeLeasesByWindowId.delete(windowId);
-
-  if (!lease) {
-    return;
-  }
-
-  lease.windowIds.delete(windowId);
-  if (lease.windowIds.size === 0) {
-    await cleanupGooseServeLease(lease);
   }
 };
 
@@ -999,12 +956,7 @@ const createChat = async (app: App, options: CreateChatOptions = {}) => {
     }
 
     workingDir = gooseServeResult.workingDir;
-    gooseServeLease = {
-      acpUrl: gooseServeResult.acpUrl,
-      cleanup: gooseServeResult.cleanup,
-      windowIds: new Set<number>(),
-      cleanedUp: false,
-    };
+    gooseServeLease = gooseServeLeases.create(gooseServeResult);
   } else {
     // Update the cached trusted-external-hostname so the TLS handlers allow
     // connections to the configured remote backend.
@@ -1057,7 +1009,7 @@ const createChat = async (app: App, options: CreateChatOptions = {}) => {
 
     const lease = gooseServeLease;
     gooseServeLease = null;
-    await cleanupGooseServeLease(lease);
+    await gooseServeLeases.cleanupLease(lease);
   };
 
   let mainWindowState: ReturnType<typeof windowStateKeeper>;
@@ -1120,9 +1072,9 @@ const createChat = async (app: App, options: CreateChatOptions = {}) => {
   if (gooseServeLease) {
     const lease = gooseServeLease;
     mainWindow.once('closed', () => {
-      void releaseWindowGooseServeLease(mainWindow.id);
+      void gooseServeLeases.releaseWindow(mainWindow.id);
     });
-    attachWindowToGooseServeLease(mainWindow.id, lease);
+    gooseServeLeases.attachWindow(mainWindow.id, lease);
     gooseServeLease = null;
   }
 
@@ -1919,9 +1871,9 @@ ipcMain.handle('get-acp-url', async (event) => {
   if (!windowId) {
     return null;
   }
-  const serveLease = gooseServeLeasesByWindowId.get(windowId);
-  if (serveLease) {
-    return serveLease.acpUrl;
+  const gooseServeAcpUrl = gooseServeLeases.getAcpUrl(windowId);
+  if (gooseServeAcpUrl) {
+    return gooseServeAcpUrl;
   }
 
   const client = goosedClients.get(windowId);
@@ -2924,7 +2876,7 @@ async function appMain() {
 
       const launchingWindowId = launchingWindow.id;
       const launchingGoosedLease = goosedLeasesByWindowId.get(launchingWindowId);
-      const launchingGooseServeLease = gooseServeLeasesByWindowId.get(launchingWindowId);
+      const launchingGooseServeLease = gooseServeLeases.get(launchingWindowId);
       if (!launchingGoosedLease && !launchingGooseServeLease) {
         throw new Error('No backend lease found for launching window');
       }
@@ -2961,8 +2913,8 @@ async function appMain() {
         attachWindowToGoosedLease(appWindow.id, launchingGoosedLease);
         releaseAppWindowBackend = () => releaseWindowGoosedLease(appWindow.id);
       } else if (launchingGooseServeLease) {
-        attachWindowToGooseServeLease(appWindow.id, launchingGooseServeLease);
-        releaseAppWindowBackend = () => releaseWindowGooseServeLease(appWindow.id);
+        gooseServeLeases.attachWindow(appWindow.id, launchingGooseServeLease);
+        releaseAppWindowBackend = () => gooseServeLeases.releaseWindow(appWindow.id);
       } else {
         throw new Error('No backend lease found for launching window');
       }
@@ -3078,10 +3030,10 @@ app.on('will-quit', async () => {
     await Promise.all([...goosedLeases].map(cleanupGoosedLease));
   }
 
-  const gooseServeLeases = new Set(gooseServeLeasesByWindowId.values());
-  if (gooseServeLeases.size > 0) {
-    log.info(`App quitting, terminating ${gooseServeLeases.size} goose serve process(es)`);
-    await Promise.all([...gooseServeLeases].map(cleanupGooseServeLease));
+  const gooseServeLeaseCount = gooseServeLeases.activeLeaseCount();
+  if (gooseServeLeaseCount > 0) {
+    log.info(`App quitting, terminating ${gooseServeLeaseCount} goose serve process(es)`);
+    await gooseServeLeases.cleanupAll();
   }
 
   for (const [windowId, blockerId] of windowPowerSaveBlockers.entries()) {

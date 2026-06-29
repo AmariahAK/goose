@@ -38,6 +38,8 @@ export interface GooseServeResult {
   process: ChildProcess;
   errorLog: string[];
   cleanup: () => Promise<void>;
+  hasExited: () => boolean;
+  getExitDetails: () => { code: number | null; signal: NodeJS.Signals | null };
   startupDiagnosticsPath: string | null;
   getStartupDiagnostics: () => GooseServeStartupDiagnostics | null;
   recordStartupEvent: (name: string, details?: Record<string, unknown>) => void;
@@ -331,7 +333,7 @@ export const startGooseServe = async ({
   let exited = false;
   let spawnFailed = false;
   let exitCode: number | null = null;
-  let exitSignal: string | null = null;
+  let exitSignal: NodeJS.Signals | null = null;
 
   gooseProcess.stdout?.resume();
 
@@ -437,6 +439,8 @@ export const startGooseServe = async ({
     process: gooseProcess,
     errorLog,
     cleanup,
+    hasExited: () => exited,
+    getExitDetails: () => ({ code: exitCode, signal: exitSignal }),
     startupDiagnosticsPath,
     getStartupDiagnostics: () => startupTrace?.diagnostics ?? null,
     recordStartupEvent: (name, details) => startupTrace?.record(name, details),
