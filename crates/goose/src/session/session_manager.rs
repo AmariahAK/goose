@@ -389,6 +389,20 @@ impl SessionManager {
         SessionUpdateBuilder::new(self, id.to_string())
     }
 
+    /// Atomically add a delta to `accumulated_usage`/`accumulated_cost` (never the
+    /// `usage` context-window columns), so a reply loop and a concurrent subagent
+    /// roll-up don't clobber each other. `None` cost is a no-op.
+    pub async fn add_accumulated_usage(
+        &self,
+        session_id: &str,
+        usage: Usage,
+        cost: Option<f64>,
+    ) -> Result<()> {
+        self.storage
+            .add_accumulated_usage(session_id, usage, cost)
+            .await
+    }
+
     async fn apply_update_inner(&self, builder: SessionUpdateBuilder<'_>) -> Result<()> {
         self.storage.apply_update(builder).await
     }
@@ -1554,6 +1568,44 @@ impl SessionStorage {
 
         if result.rows_affected() == 0 {
             return Err(anyhow::anyhow!("Session not found: {}", builder.session_id));
+        }
+
+        tx.commit().await?;
+        Ok(())
+    }
+
+    async fn add_accumulated_usage(
+        &self,
+        session_id: &str,
+        usage: Usage,
+        cost: Option<f64>,
+    ) -> Result<()> {
+        let pool = self.pool().await?;
+        let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+        let result = sqlx::query(
+            "UPDATE sessions SET \
+             accumulated_total_tokens = COALESCE(accumulated_total_tokens, 0) + COALESCE(?, 0), \
+             accumulated_input_tokens = COALESCE(accumulated_input_tokens, 0) + COALESCE(?, 0), \
+             accumulated_output_tokens = COALESCE(accumulated_output_tokens, 0) + COALESCE(?, 0), \
+             accumulated_cache_read_tokens = COALESCE(accumulated_cache_read_tokens, 0) + COALESCE(?, 0), \
+             accumulated_cache_write_tokens = COALESCE(accumulated_cache_write_tokens, 0) + COALESCE(?, 0), \
+             accumulated_cost = CASE WHEN ? IS NULL THEN accumulated_cost ELSE COALESCE(accumulated_cost, 0) + ? END, \
+             updated_at = datetime('now') \
+             WHERE id = ?",
+        )
+        .bind(usage.total_tokens)
+        .bind(usage.input_tokens)
+        .bind(usage.output_tokens)
+        .bind(usage.cache_read_input_tokens)
+        .bind(usage.cache_write_input_tokens)
+        .bind(cost)
+        .bind(cost)
+        .bind(session_id)
+        .execute(&mut *tx)
+        .await?;
+
+        if result.rows_affected() == 0 {
+            return Err(anyhow::anyhow!("Session not found: {}", session_id));
         }
 
         tx.commit().await?;
@@ -3620,5 +3672,104 @@ mod tests {
         let loaded = sm.get_session("cache_id", false).await.unwrap();
         assert_eq!(loaded.usage, usage);
         assert_eq!(loaded.accumulated_usage, accumulated_usage);
+    }
+
+    #[tokio::test]
+    async fn test_add_accumulated_usage_folds_into_accumulated_not_context() {
+        let temp_dir = TempDir::new().unwrap();
+        let sm = SessionManager::new(temp_dir.path().to_path_buf());
+        let parent = sm
+            .create_session(
+                PathBuf::from("/tmp/test"),
+                "Parent".to_string(),
+                SessionType::User,
+                GooseMode::default(),
+            )
+            .await
+            .unwrap();
+
+        let parent_context = Usage::new(Some(1000), Some(200), Some(1200));
+        let parent_accumulated = Usage::new(Some(5000), Some(800), Some(5800));
+        sm.update(&parent.id)
+            .usage(parent_context)
+            .accumulated_usage(parent_accumulated)
+            .accumulated_cost(Some(0.50))
+            .apply()
+            .await
+            .unwrap();
+
+        let subagent_usage =
+            Usage::new(Some(3000), Some(400), Some(3400)).with_cache_tokens(Some(2000), Some(100));
+        sm.add_accumulated_usage(&parent.id, subagent_usage, Some(0.25))
+            .await
+            .unwrap();
+
+        let loaded = sm.get_session(&parent.id, false).await.unwrap();
+
+        assert_eq!(
+            loaded.usage, parent_context,
+            "context-window usage must not absorb subagent tokens"
+        );
+        assert_eq!(loaded.accumulated_usage.total_tokens, Some(5800 + 3400));
+        assert_eq!(loaded.accumulated_usage.input_tokens, Some(5000 + 3000));
+        assert_eq!(loaded.accumulated_usage.output_tokens, Some(800 + 400));
+        assert_eq!(loaded.accumulated_usage.cache_read_input_tokens, Some(2000));
+        assert_eq!(loaded.accumulated_usage.cache_write_input_tokens, Some(100));
+        assert_eq!(loaded.accumulated_cost, Some(0.75));
+
+        sm.add_accumulated_usage(&parent.id, Usage::new(Some(1), Some(1), Some(2)), None)
+            .await
+            .unwrap();
+        let loaded = sm.get_session(&parent.id, false).await.unwrap();
+        assert_eq!(loaded.accumulated_usage.total_tokens, Some(5800 + 3400 + 2));
+        assert_eq!(
+            loaded.accumulated_cost,
+            Some(0.75),
+            "a None cost estimate must leave accumulated cost unchanged"
+        );
+    }
+
+    // Concurrent increments must all survive (lost-update regression).
+    #[tokio::test]
+    async fn test_add_accumulated_usage_concurrent_increments_are_not_lost() {
+        let temp_dir = TempDir::new().unwrap();
+        let sm = Arc::new(SessionManager::new(temp_dir.path().to_path_buf()));
+        let parent = sm
+            .create_session(
+                PathBuf::from("/tmp/test"),
+                "Parent".to_string(),
+                SessionType::User,
+                GooseMode::default(),
+            )
+            .await
+            .unwrap();
+        sm.storage().pool().await.unwrap();
+
+        let writers = 50;
+        let mut handles = Vec::new();
+        for _ in 0..writers {
+            let sm = Arc::clone(&sm);
+            let id = parent.id.clone();
+            handles.push(tokio::spawn(async move {
+                sm.add_accumulated_usage(&id, Usage::new(Some(10), Some(2), Some(12)), Some(0.01))
+                    .await
+                    .unwrap();
+            }));
+        }
+        for handle in handles {
+            handle.await.unwrap();
+        }
+
+        let loaded = sm.get_session(&parent.id, false).await.unwrap();
+        assert_eq!(loaded.accumulated_usage.total_tokens, Some(12 * writers));
+        assert_eq!(loaded.accumulated_usage.input_tokens, Some(10 * writers));
+        assert_eq!(loaded.accumulated_usage.output_tokens, Some(2 * writers));
+        let cost = loaded.accumulated_cost.unwrap();
+        assert!(
+            (cost - 0.01 * writers as f64).abs() < 1e-9,
+            "expected ~{}, got {}",
+            0.01 * writers as f64,
+            cost
+        );
     }
 }
