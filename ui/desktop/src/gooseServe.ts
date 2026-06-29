@@ -43,8 +43,13 @@ const existingFile = (candidate: string): boolean => {
 };
 
 export const findGooseBinaryPath = (options: FindGooseBinaryOptions = {}): string => {
+  const { isPackaged = false, resourcesPath } = options;
   const pathFromEnv = process.env.GOOSE_BINARY;
   if (pathFromEnv) {
+    if (isPackaged) {
+      throw new Error('GOOSE_BINARY is only supported in development builds');
+    }
+
     const resolvedPath = path.resolve(pathFromEnv);
     if (existingFile(resolvedPath)) {
       return resolvedPath;
@@ -52,7 +57,6 @@ export const findGooseBinaryPath = (options: FindGooseBinaryOptions = {}): strin
     throw new Error(`Invalid GOOSE_BINARY path: ${pathFromEnv} (pwd is ${process.cwd()})`);
   }
 
-  const { isPackaged = false, resourcesPath } = options;
   const binaryName = process.platform === 'win32' ? 'goose.exe' : 'goose';
   const possiblePaths: string[] = [];
 
@@ -221,7 +225,7 @@ export const startGooseServe = async ({
   let exited = false;
   let spawnFailed = false;
   let exitCode: number | null = null;
-  let exitSignal: NodeJS.Signals | null = null;
+  let exitSignal: string | null = null;
 
   gooseProcess.stdout?.resume();
 

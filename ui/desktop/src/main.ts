@@ -529,10 +529,13 @@ async function handleProtocolUrl(url: string, parsedUrl: URL) {
     return;
   } else if (parsedUrl.hostname === 'bot' || parsedUrl.hostname === 'recipe') {
     const existingWindows = BrowserWindow.getAllWindows();
-    const targetWindow =
-      existingWindows.length > 0
-        ? existingWindows[0]
-        : await createChat(app, { dir: openDir || undefined });
+    let targetWindow: BrowserWindow | undefined = existingWindows[0];
+    if (!targetWindow) {
+      targetWindow = await createChat(app, { dir: openDir || undefined });
+      if (!targetWindow) {
+        return;
+      }
+    }
     await processProtocolUrl(url, parsedUrl, targetWindow);
   } else {
     const existingWindows = BrowserWindow.getAllWindows();
@@ -544,7 +547,11 @@ async function handleProtocolUrl(url: string, parsedUrl: URL) {
       }
       targetWindow.focus();
     } else {
-      targetWindow = await createChat(app, { dir: openDir || undefined });
+      const newWindow = await createChat(app, { dir: openDir || undefined });
+      if (!newWindow) {
+        return;
+      }
+      targetWindow = newWindow;
     }
 
     if (targetWindow.webContents.isLoadingMainFrame()) {
@@ -645,6 +652,9 @@ app.on('open-url', async (_event, url) => {
     } else {
       openUrlHandledLaunch = true;
       const newWindow = await createChat(app, { dir: openDir || undefined });
+      if (!newWindow) {
+        return;
+      }
       pendingDeepLinks.set(newWindow.id, url);
     }
   }

@@ -27,7 +27,7 @@ import type { CallToolResult, JSONRPCRequest, Tool } from '@modelcontextprotocol
 import { GripHorizontal, Maximize2, PictureInPicture2, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { callMcpAppTool, readMcpAppResource } from '../../acp/mcp-apps';
-import { httpOriginFromAcpWebSocketUrl } from '../../acp/url';
+import { httpBaseFromAcpWebSocketUrl } from '../../acp/url';
 import { getCachedTools } from './toolsCache';
 import { AppEvents } from '../../constants/events';
 import { useTheme } from '../../contexts/ThemeContext';
@@ -184,7 +184,8 @@ async function fetchMcpAppProxyUrl(csp: McpUiResourceCsp | null): Promise<string
       return null;
     }
 
-    const proxyUrl = new URL('/mcp-app-proxy', httpOriginFromAcpWebSocketUrl(acpUrl));
+    const httpBase = httpBaseFromAcpWebSocketUrl(acpUrl).replace(/\/+$/, '');
+    const proxyUrl = new URL(`${httpBase}/mcp-app-proxy`);
     proxyUrl.searchParams.set('secret', secretKey);
 
     if (csp?.connectDomains?.length) {

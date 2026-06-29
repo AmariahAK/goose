@@ -1,4 +1,4 @@
-export function httpOriginFromAcpWebSocketUrl(acpUrl: string): string {
+export function httpBaseFromAcpWebSocketUrl(acpUrl: string): string {
   const url = new URL(acpUrl);
 
   if (url.protocol === 'ws:') {
@@ -9,5 +9,8 @@ export function httpOriginFromAcpWebSocketUrl(acpUrl: string): string {
     throw new Error(`ACP URL must use ws: or wss:, got ${url.protocol}`);
   }
 
-  return url.origin;
+  const pathname = url.pathname.replace(/\/+$/, '');
+  const pathPrefix = pathname.endsWith('/acp') ? pathname.slice(0, -'/acp'.length) : pathname;
+
+  return `${url.origin}${pathPrefix}`;
 }
