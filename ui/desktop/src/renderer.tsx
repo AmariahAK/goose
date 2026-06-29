@@ -36,7 +36,7 @@ function handleIntlError(err: { code: string; message?: string }) {
   const isLauncher = window.location.hash === '#/launcher';
 
   if (!isLauncher) {
-    const backendAcpOnly = window.appConfig.get('GOOSE_BACKEND_ACP_ONLY') === true;
+    const backendAcpOnly = window.appConfig.get('GOOSE_DESKTOP_BACKEND') === 'acp';
     if (!backendAcpOnly) {
       const gooseApiHost = await window.electron.getGoosedHostPort();
       if (gooseApiHost === null) {

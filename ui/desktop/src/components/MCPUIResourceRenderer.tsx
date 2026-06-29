@@ -138,7 +138,7 @@ export default function MCPUIResourceRenderer({
   const intl = useIntl();
   const { resolvedTheme } = useTheme();
   const [proxyUrl, setProxyUrl] = useState<string | undefined>(undefined);
-  const backendAcpOnly = window.appConfig.get('GOOSE_BACKEND_ACP_ONLY') === true;
+  const backendAcpOnly = window.appConfig.get('GOOSE_DESKTOP_BACKEND') === 'acp';
 
   useEffect(() => {
     if (backendAcpOnly) {

@@ -417,7 +417,7 @@ export default function McpAppRenderer({
 
   const effectiveInlineHeight = iframeHeight || DEFAULT_IFRAME_HEIGHT;
 
-  const backendAcpOnly = window.appConfig.get('GOOSE_BACKEND_ACP_ONLY') === true;
+  const backendAcpOnly = window.appConfig.get('GOOSE_DESKTOP_BACKEND') === 'acp';
   const [containerWidth, setContainerWidth] = useState<number>(0);
   const [containerHeight, setContainerHeight] = useState<number>(0);
   const [restApiHost, setRestApiHost] = useState<string | null>(null);

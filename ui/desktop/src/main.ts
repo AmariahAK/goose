@@ -810,7 +810,7 @@ let appConfig = {
   GOOSE_DEFAULT_MODEL: defaultModel,
   GOOSE_PREDEFINED_MODELS: predefinedModels,
   GOOSE_API_HOST: 'https://localhost',
-  GOOSE_BACKEND_ACP_ONLY: process.env.GOOSE_BACKEND_ACP_ONLY === 'true',
+  GOOSE_DESKTOP_BACKEND: process.env.GOOSE_DESKTOP_BACKEND,
   GOOSE_PATH_ROOT: resolveGoosePathRoot(),
   GOOSE_WORKING_DIR: '',
   // Start with the env-var override; the OS region locale is filled in after app.ready
@@ -949,7 +949,7 @@ const createChat = async (app: App, options: CreateChatOptions = {}) => {
     recipeParameters,
   } = options;
   const settings = getSettings();
-  const backendAcpOnly = appConfig.GOOSE_BACKEND_ACP_ONLY === true;
+  const backendAcpOnly = appConfig.GOOSE_DESKTOP_BACKEND === 'acp';
   const serverSecret = backendAcpOnly ? GENERATED_SECRET : getServerSecret(settings);
   let baseUrl = '';
   let workingDir = dir || os.homedir();
@@ -1886,7 +1886,7 @@ ipcMain.handle('set-setting', (_event, key: SettingKey, value: unknown) => {
 });
 
 ipcMain.handle('get-secret-key', () => {
-  if (appConfig.GOOSE_BACKEND_ACP_ONLY === true) {
+  if (appConfig.GOOSE_DESKTOP_BACKEND === 'acp') {
     return GENERATED_SECRET;
   }
 
