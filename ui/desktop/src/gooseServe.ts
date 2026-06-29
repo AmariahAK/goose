@@ -3,6 +3,11 @@ import fs from 'node:fs';
 import { createServer } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
+import {
+  appendTail as appendStartupTail,
+  createGooseServeStartupDiagnostics,
+  type GooseServeStartupDiagnostics,
+} from './startupDiagnostics';
 
 export interface Logger {
   info: (...args: unknown[]) => void;
@@ -24,6 +29,7 @@ export interface StartGooseServeOptions extends FindGooseBinaryOptions {
   serverSecret: string;
   env?: Record<string, string | undefined>;
   logger?: Logger;
+  diagnosticsDir?: string;
 }
 
 export interface GooseServeResult {
@@ -32,6 +38,9 @@ export interface GooseServeResult {
   process: ChildProcess;
   errorLog: string[];
   cleanup: () => Promise<void>;
+  startupDiagnosticsPath: string | null;
+  getStartupDiagnostics: () => GooseServeStartupDiagnostics | null;
+  recordStartupEvent: (name: string, details?: Record<string, unknown>) => void;
 }
 
 const existingFile = (candidate: string): boolean => {
@@ -103,7 +112,7 @@ const isFatalError = (line: string): boolean => {
   return fatalPatterns.some((pattern) => pattern.test(line));
 };
 
-const appendTail = (target: string[], lines: string[], maxLines = 100): void => {
+const appendErrorTail = (target: string[], lines: string[], maxLines = 100): void => {
   for (const line of lines) {
     if (line.trim()) {
       target.push(line);
@@ -131,24 +140,62 @@ const fetchStatus = async (statusUrl: string): Promise<boolean> => {
 const waitForGooseServeReady = async (
   statusUrl: string,
   errorLog: string[],
-  shouldStopWaiting: () => boolean
+  shouldStopWaiting: () => boolean,
+  options: {
+    healthUrl: string;
+    onEvent?: (name: string, details?: Record<string, unknown>) => void;
+  }
 ): Promise<boolean> => {
   const timeout = 30000;
   const interval = 100;
   const deadline = Date.now() + timeout;
+  const probeDetails = {
+    transport: 'plain-http',
+    method: 'GET',
+    path: '/status',
+    url: statusUrl,
+    statusUrl,
+    healthUrl: options.healthUrl,
+  };
+  options.onEvent?.('healthcheck_start', {
+    ...probeDetails,
+    timeoutMs: timeout,
+    intervalMs: interval,
+  });
 
+  let attempt = 1;
   while (Date.now() < deadline) {
-    if (shouldStopWaiting() || errorLog.some(isFatalError)) {
+    if (shouldStopWaiting()) {
+      options.onEvent?.('healthcheck_fatal_error', {
+        ...probeDetails,
+        attempt,
+        reason: 'process_unavailable',
+      });
+      return false;
+    }
+
+    if (errorLog.some(isFatalError)) {
+      options.onEvent?.('healthcheck_fatal_error', {
+        ...probeDetails,
+        attempt,
+        reason: 'fatal_stderr',
+      });
       return false;
     }
 
     if (await fetchStatus(statusUrl)) {
+      options.onEvent?.('healthcheck_success', {
+        ...probeDetails,
+        attempt,
+      });
       return true;
     }
 
     await delay(interval);
+    attempt += 1;
   }
 
+  options.onEvent?.('healthcheck_timeout', { ...probeDetails, timeoutMs: timeout });
   return false;
 };
 
@@ -157,6 +204,30 @@ const buildAcpUrl = (port: number, token: string): string => {
   url.protocol = 'ws:';
   url.searchParams.set('token', token);
   return url.toString();
+};
+
+const buildRedactedAcpUrl = (port: number): string => {
+  const url = new URL(`http://127.0.0.1:${port}/acp`);
+  url.protocol = 'ws:';
+  url.searchParams.set('token', 'REDACTED');
+  return url.toString();
+};
+
+const errorMessage = (error: unknown): string => {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return String(error);
+};
+
+const withStartupDiagnosticsPath = (
+  message: string,
+  startupDiagnosticsPath: string | null
+): string => {
+  if (!startupDiagnosticsPath) {
+    return message;
+  }
+  return `${message} Startup diagnostics: ${startupDiagnosticsPath}`;
 };
 
 const buildGooseServeEnv = (
@@ -198,20 +269,50 @@ export const startGooseServe = async ({
   isPackaged,
   resourcesPath,
   logger = defaultLogger,
+  diagnosticsDir,
 }: StartGooseServeOptions): Promise<GooseServeResult> => {
   const workingDir = dir || process.cwd();
+  const startupTrace = createGooseServeStartupDiagnostics(diagnosticsDir, workingDir);
+  const startupDiagnosticsPath = startupTrace?.diagnosticsPath ?? null;
   const secretKey = serverSecret.trim();
   if (!secretKey) {
-    throw new Error('GOOSE_SERVER__SECRET_KEY is required for goose serve');
+    const message = 'GOOSE_SERVER__SECRET_KEY is required for goose serve';
+    startupTrace?.record('configuration_error', { message });
+    throw new Error(withStartupDiagnosticsPath(message, startupDiagnosticsPath));
   }
 
-  const goosePath = findGooseBinaryPath({ isPackaged, resourcesPath });
+  let goosePath: string;
+  try {
+    goosePath = findGooseBinaryPath({ isPackaged, resourcesPath });
+  } catch (error) {
+    const message = errorMessage(error);
+    startupTrace?.record('binary_resolve_error', { message });
+    throw new Error(withStartupDiagnosticsPath(message, startupDiagnosticsPath));
+  }
+
   const port = await findAvailablePort();
-  const statusUrl = `http://127.0.0.1:${port}/status`;
+  const httpBaseUrl = `http://127.0.0.1:${port}`;
+  const statusUrl = `${httpBaseUrl}/status`;
+  const healthUrl = `${httpBaseUrl}/health`;
   const acpUrl = buildAcpUrl(port, secretKey);
+  const redactedAcpUrl = buildRedactedAcpUrl(port);
   const errorLog: string[] = [];
 
   logger.info(`Starting goose serve from: ${goosePath} on port ${port} in dir ${workingDir}`);
+  if (startupTrace) {
+    startupTrace.diagnostics.binaryPath = goosePath;
+    startupTrace.diagnostics.httpBaseUrl = httpBaseUrl;
+    startupTrace.diagnostics.readinessUrl = statusUrl;
+    startupTrace.diagnostics.statusUrl = statusUrl;
+    startupTrace.diagnostics.healthUrl = healthUrl;
+    startupTrace.diagnostics.acpUrl = redactedAcpUrl;
+    startupTrace.record('spawn_start', {
+      binaryPath: goosePath,
+      port,
+      workingDir,
+      args: ['serve', '--host', '127.0.0.1', '--port', String(port)],
+    });
+  }
 
   const gooseProcess = spawn(goosePath, ['serve', '--host', '127.0.0.1', '--port', String(port)], {
     env: buildGooseServeEnv(secretKey, goosePath, additionalEnv),
@@ -221,6 +322,10 @@ export const startGooseServe = async ({
     shell: false,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
+  if (startupTrace) {
+    startupTrace.diagnostics.pid = gooseProcess.pid ?? null;
+    startupTrace.record('spawn_success', { pid: gooseProcess.pid ?? null });
+  }
 
   let exited = false;
   let spawnFailed = false;
@@ -231,7 +336,10 @@ export const startGooseServe = async ({
 
   const onStderrData = (data: Buffer) => {
     const lines = data.toString().split('\n');
-    appendTail(errorLog, lines);
+    appendErrorTail(errorLog, lines);
+    if (startupTrace) {
+      appendStartupTail(startupTrace.diagnostics.stderrTail, lines);
+    }
     for (const line of lines) {
       if (line.trim() && isFatalError(line)) {
         logger.error(`goose serve stderr for port ${port} and dir ${workingDir}: ${line}`);
@@ -248,12 +356,18 @@ export const startGooseServe = async ({
     logger.info(
       `goose serve process exited with code ${code} and signal ${signal} for port ${port} and dir ${workingDir}`
     );
+    if (startupTrace) {
+      startupTrace.diagnostics.childExitCode = code;
+      startupTrace.diagnostics.childExitSignal = signal;
+      startupTrace.record('child_exit', { code, signal });
+    }
   });
 
   gooseProcess.on('error', (error) => {
     spawnFailed = true;
     errorLog.push(error.message);
     logger.error(`Failed to start goose serve on port ${port} and dir ${workingDir}`, error);
+    startupTrace?.record('spawn_error', { message: error.message, name: error.name });
   });
 
   const cleanup = async (): Promise<void> => {
@@ -295,7 +409,10 @@ export const startGooseServe = async ({
     });
   };
 
-  const ready = await waitForGooseServeReady(statusUrl, errorLog, () => exited || spawnFailed);
+  const ready = await waitForGooseServeReady(statusUrl, errorLog, () => exited || spawnFailed, {
+    healthUrl,
+    onEvent: startupTrace?.record,
+  });
   gooseProcess.stderr?.off('data', onStderrData);
   gooseProcess.stderr?.resume();
 
@@ -306,7 +423,10 @@ export const startGooseServe = async ({
       : '';
     const stderrDetails = errorLog.length ? ` Stderr: ${errorLog.join('\n')}` : '';
     throw new Error(
-      `goose serve did not become ready on ${statusUrl}.${exitDetails}${stderrDetails}`
+      withStartupDiagnosticsPath(
+        `goose serve did not become ready on ${statusUrl}.${exitDetails}${stderrDetails}`,
+        startupDiagnosticsPath
+      )
     );
   }
 
@@ -316,5 +436,8 @@ export const startGooseServe = async ({
     process: gooseProcess,
     errorLog,
     cleanup,
+    startupDiagnosticsPath,
+    getStartupDiagnostics: () => startupTrace?.diagnostics ?? null,
+    recordStartupEvent: (name, details) => startupTrace?.record(name, details),
   };
 };

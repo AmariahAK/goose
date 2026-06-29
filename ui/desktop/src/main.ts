@@ -960,16 +960,35 @@ const createChat = async (app: App, options: CreateChatOptions = {}) => {
     trustedExternalHostname = null;
     pinnedCertFingerprint = null;
 
-    const gooseServeResult = await startGooseServe({
-      serverSecret,
-      dir: workingDir,
-      env: {
-        GOOSE_PATH_ROOT: appConfig.GOOSE_PATH_ROOT as string | undefined,
-      },
-      isPackaged: app.isPackaged,
-      resourcesPath: app.isPackaged ? process.resourcesPath : undefined,
-      logger: log,
-    });
+    let gooseServeResult: Awaited<ReturnType<typeof startGooseServe>>;
+    try {
+      gooseServeResult = await startGooseServe({
+        serverSecret,
+        dir: workingDir,
+        env: {
+          GOOSE_PATH_ROOT: appConfig.GOOSE_PATH_ROOT as string | undefined,
+        },
+        isPackaged: app.isPackaged,
+        resourcesPath: app.isPackaged ? process.resourcesPath : undefined,
+        logger: log,
+        diagnosticsDir: STARTUP_LOGS_DIR,
+      });
+    } catch (error) {
+      log.error('goose serve failed to start', error);
+      dialog.showMessageBoxSync({
+        type: 'error',
+        title: 'Goose Failed to Start',
+        message: 'The backend server failed to start.',
+        detail: [
+          'Backend: goose serve',
+          'Readiness check: plain GET /status',
+          `Startup error:\n${errorMessage(error)}`,
+        ].join('\n\n'),
+        buttons: ['OK'],
+      });
+      app.quit();
+      return;
+    }
 
     workingDir = gooseServeResult.workingDir;
     gooseServeLease = {
