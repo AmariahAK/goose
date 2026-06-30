@@ -40,7 +40,8 @@
     "test": "node --import tsx --test tests/*.test.ts",
     "typecheck:test": "tsc -p tsconfig.test.json --noEmit",
     "format": "prettier --write src/",
-    "check:compat": "node scripts/check-binary-compat.mjs"
+    "check:compat": "node scripts/check-binary-compat.mjs",
+    "check:release-version-sync": "node scripts/check-release-version-sync.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/ext-apps": "^0.3.1",

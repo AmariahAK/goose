@@ -95,6 +95,11 @@ jobs:
           cd ui
           pnpm install --frozen-lockfile
 
+      - name: Check npm release versions
+        run: |
+          cd ui/sdk
+          pnpm run check:release-version-sync
+
       - name: Build packages
         run: |
           cd ui/sdk

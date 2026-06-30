@@ -174,3 +174,14 @@ jobs:
           allowUpdates: true
           omitBody: true
           omitPrereleaseDuringUpdate: true
+
+  publish-npm:
+    name: Publish npm packages
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [release]
+    uses: ./.github/workflows/publish-npm.yml
+    permissions:
+      contents: write
+      pull-requests: write
+      id-token: write
+    secrets: inherit
