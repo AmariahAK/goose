@@ -1,5 +1,12 @@
 import { acpHttpUrlFromHttpBase, statusHttpUrlFromHttpBase } from './acp/url';
 
+const HEALTHCHECK_TIMEOUT_MS = 30000;
+const HEALTHCHECK_INTERVAL_MS = 100;
+const PROBE_TIMEOUT_MS = 1000;
+
+type FetchInput = Parameters<typeof globalThis.fetch>[0];
+type FetchInit = Parameters<typeof globalThis.fetch>[1];
+
 export interface CheckServerStatusOptions {
   onEvent?: (name: string, details?: Record<string, unknown>) => void;
 }
@@ -17,6 +24,24 @@ export const isFatalError = (line: string): boolean => {
   return fatalPatterns.some((pattern) => pattern.test(line));
 };
 
+const delay = (timeoutMs: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, timeoutMs));
+
+const fetchWithTimeout = async (
+  fetch: typeof globalThis.fetch,
+  input: FetchInput,
+  init?: FetchInit
+): Promise<Response> => {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS);
+
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
+};
+
 export const checkBackendStatus = async ({
   baseUrl,
   serverSecret,
@@ -24,27 +49,29 @@ export const checkBackendStatus = async ({
   errorLog = [],
   options = {},
 }: CheckBackendStatusParams): Promise<boolean> => {
-  const timeout = 30000;
-  const interval = 100;
-  const maxAttempts = Math.ceil(timeout / interval);
+  const deadline = Date.now() + HEALTHCHECK_TIMEOUT_MS;
   const statusUrl = statusHttpUrlFromHttpBase(baseUrl);
   const acpUrl = acpHttpUrlFromHttpBase(baseUrl, serverSecret);
-  options.onEvent?.('healthcheck_start', { timeoutMs: timeout, intervalMs: interval });
+  options.onEvent?.('healthcheck_start', {
+    timeoutMs: HEALTHCHECK_TIMEOUT_MS,
+    intervalMs: HEALTHCHECK_INTERVAL_MS,
+  });
 
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+  let attempt = 1;
+  while (Date.now() < deadline) {
     if (errorLog.some(isFatalError)) {
       options.onEvent?.('healthcheck_fatal_error', { attempt });
       return false;
     }
 
     try {
-      const response = await fetch(statusUrl, {
+      const response = await fetchWithTimeout(fetch, statusUrl, {
         headers: {
           'X-Secret-Key': serverSecret,
         },
       });
       if (response.ok) {
-        const authResponse = await fetch(acpUrl);
+        const authResponse = await fetchWithTimeout(fetch, acpUrl);
         // GET /acp without an SSE Accept header returns 406 after auth succeeds.
         if (authResponse.status === 406) {
           options.onEvent?.('healthcheck_success', { attempt });
@@ -59,9 +86,10 @@ export const checkBackendStatus = async ({
       // Retry until the backend is ready or the timeout expires.
     }
 
-    await new Promise((resolve) => setTimeout(resolve, interval));
+    await delay(HEALTHCHECK_INTERVAL_MS);
+    attempt += 1;
   }
 
-  options.onEvent?.('healthcheck_timeout', { timeoutMs: timeout });
+  options.onEvent?.('healthcheck_timeout', { timeoutMs: HEALTHCHECK_TIMEOUT_MS });
   return false;
 };
