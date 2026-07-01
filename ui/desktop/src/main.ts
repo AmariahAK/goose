@@ -1065,7 +1065,8 @@ const createChat = async (
       }
 
       gooseServeLease = gooseServeLeases.createExternal(
-        acpWebSocketUrlFromHttpBase(externalBaseUrl, serverSecret)
+        acpWebSocketUrlFromHttpBase(externalBaseUrl, serverSecret),
+        serverSecret
       );
     } catch (error) {
       log.error('External ACP backend is misconfigured', error);
@@ -1144,7 +1145,7 @@ const createChat = async (
     }
 
     workingDir = gooseServeResult.workingDir;
-    gooseServeLease = gooseServeLeases.create(gooseServeResult);
+    gooseServeLease = gooseServeLeases.create(gooseServeResult, serverSecret);
   }
 
   const cleanupUnregisteredGooseServeLease = async () => {
@@ -1906,9 +1907,12 @@ ipcMain.handle('set-setting', (_event, key: SettingKey, value: unknown) => {
   }
 });
 
-ipcMain.handle('get-secret-key', () => {
-  const settings = getSettings();
-  return getActiveExternalBackend(settings)?.secret ?? GENERATED_SECRET;
+ipcMain.handle('get-secret-key', (event) => {
+  const windowId = BrowserWindow.fromWebContents(event.sender)?.id;
+  if (!windowId) {
+    return null;
+  }
+  return gooseServeLeases.getSecretKey(windowId) ?? null;
 });
 
 ipcMain.handle('get-acp-url', async (event) => {
