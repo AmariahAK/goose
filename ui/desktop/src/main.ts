@@ -25,10 +25,9 @@ import path from 'node:path';
 import os from 'node:os';
 import { execFileSync, spawn, execFile } from 'child_process';
 import 'dotenv/config';
-import { checkServerStatus } from './backendStatus';
+import { checkBackendStatus } from './backendStatus';
 import { startGooseServe } from './gooseServe';
 import { GooseServeLeaseRegistry, type GooseServeLease } from './gooseServeLeaseRegistry';
-import { createClient, createConfig } from './api/client';
 import { acpWebSocketUrlFromHttpBase, normalizeAcpHttpBaseUrl } from './acp/url';
 import { expandTilde } from './utils/pathUtils';
 import log from './utils/logger';
@@ -51,7 +50,6 @@ import {
 } from './utils/autoUpdater';
 import { UPDATES_ENABLED } from './updates';
 import './utils/recipeHash';
-import { Client } from './api/client';
 import type { GooseApp } from './types/apps';
 import installExtension, { REACT_DEVELOPER_TOOLS } from 'electron-devtools-installer';
 import { BLOCKED_PROTOCOLS, WEB_PROTOCOLS } from './utils/urlSecurity';
@@ -918,18 +916,6 @@ const getExternalBackendForCsp = (settings: Settings) => {
   };
 };
 
-const createMainProcessBackendClient = (baseUrl: string, serverSecret: string): Client =>
-  createClient(
-    createConfig({
-      baseUrl,
-      fetch: net.fetch as unknown as typeof globalThis.fetch,
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Secret-Key': serverSecret,
-      },
-    })
-  );
-
 let appConfig = {
   GOOSE_DEFAULT_PROVIDER: defaultProvider,
   GOOSE_DEFAULT_MODEL: defaultModel,
@@ -1045,10 +1031,11 @@ const createChat = async (
         ? normalizeFingerprint(externalBackend.certFingerprint)
         : null;
 
-      const externalBackendReady = await checkServerStatus(
-        createMainProcessBackendClient(externalBaseUrl, serverSecret),
-        []
-      );
+      const externalBackendReady = await checkBackendStatus({
+        baseUrl: externalBaseUrl,
+        serverSecret,
+        fetch: net.fetch as unknown as typeof globalThis.fetch,
+      });
       if (!externalBackendReady) {
         const canDisableExternalBackend = externalBackend.source === 'settings';
         const response = dialog.showMessageBoxSync({
