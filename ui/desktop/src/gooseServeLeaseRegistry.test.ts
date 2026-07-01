@@ -21,6 +21,7 @@ function createGooseServeResult(
     workingDir: '/tmp',
     process: new EventEmitter() as GooseServeResult['process'],
     errorLog: [],
+    certFingerprint: null,
     cleanup: vi.fn(async () => undefined),
     hasExited: () => false,
     getExitDetails: () => ({ code: null, signal: null }),

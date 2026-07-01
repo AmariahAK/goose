@@ -1103,6 +1103,7 @@ const createChat = async (
       gooseServeResult = await startGooseServe({
         serverSecret,
         dir: workingDir,
+        tls: true,
         env: {
           GOOSE_PATH_ROOT: appConfig.GOOSE_PATH_ROOT as string | undefined,
         },
@@ -1110,7 +1111,19 @@ const createChat = async (
         resourcesPath: app.isPackaged ? process.resourcesPath : undefined,
         logger: log,
         diagnosticsDir: STARTUP_LOGS_DIR,
+        readinessFetch: net.fetch as unknown as typeof globalThis.fetch,
       });
+      if (!gooseServeResult.certFingerprint) {
+        await gooseServeResult.cleanup();
+        throw new Error('goose serve started with TLS but did not return a certificate fingerprint');
+      }
+
+      const localCertFingerprint = normalizeFingerprint(gooseServeResult.certFingerprint);
+      if (pinnedCertFingerprint && pinnedCertFingerprint !== localCertFingerprint) {
+        await gooseServeResult.cleanup();
+        throw new Error('goose serve TLS certificate fingerprint did not match readiness probe');
+      }
+      pinnedCertFingerprint = localCertFingerprint;
     } catch (error) {
       log.error('goose serve failed to start', error);
       dialog.showMessageBoxSync({
@@ -1119,7 +1132,7 @@ const createChat = async (
         message: 'The backend server failed to start.',
         detail: [
           'Backend: goose serve',
-          'Readiness check: plain GET /status',
+          'Readiness check: HTTPS GET /status',
           `Startup error:\n${errorMessage(error)}`,
         ].join('\n\n'),
         buttons: ['OK'],
@@ -1151,6 +1164,7 @@ const createChat = async (
     });
 
     mainWindow = new BrowserWindow({
+      show: false,
       titleBarStyle: process.platform === 'darwin' ? 'hidden' : 'default',
       trafficLightPosition: process.platform === 'darwin' ? { x: 20, y: 16 } : undefined,
       vibrancy: process.platform === 'darwin' ? 'window' : undefined,
@@ -1350,6 +1364,11 @@ const createChat = async (
   url.hash = `${appPath}?${searchParams.toString()}`;
   let formattedUrl = formatUrl(url);
   log.info('Opening URL: ', formattedUrl);
+  mainWindow.once('ready-to-show', () => {
+    if (!mainWindow.isDestroyed()) {
+      mainWindow.show();
+    }
+  });
   mainWindow.loadURL(formattedUrl);
 
   // If we have an initial message, store it to send after React is ready

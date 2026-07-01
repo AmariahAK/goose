@@ -24,12 +24,16 @@ export interface FindGooseBinaryOptions {
   resourcesPath?: string;
 }
 
+type ReadinessFetch = (input: string, init?: RequestInit) => Promise<Response>;
+
 export interface StartGooseServeOptions extends FindGooseBinaryOptions {
   dir?: string;
   serverSecret: string;
+  tls?: boolean;
   env?: Record<string, string | undefined>;
   logger?: Logger;
   diagnosticsDir?: string;
+  readinessFetch?: ReadinessFetch;
 }
 
 export interface GooseServeResult {
@@ -37,6 +41,7 @@ export interface GooseServeResult {
   workingDir: string;
   process: ChildProcess;
   errorLog: string[];
+  certFingerprint: string | null;
   cleanup: () => Promise<void>;
   hasExited: () => boolean;
   getExitDetails: () => { code: number | null; signal: NodeJS.Signals | null };
@@ -125,17 +130,41 @@ const appendErrorTail = (target: string[], lines: string[], maxLines = 100): voi
   }
 };
 
-const fetchStatus = async (statusUrl: string): Promise<boolean> => {
+const CERT_FINGERPRINT_PREFIX = 'GOOSED_CERT_FINGERPRINT=';
+const TLS_FINGERPRINT_TIMEOUT_MS = 5000;
+
+const fetchStatus = async (
+  statusUrl: string,
+  readinessFetch: ReadinessFetch
+): Promise<boolean> => {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 1000);
 
   try {
-    const response = await fetch(statusUrl, { signal: controller.signal });
+    const response = await readinessFetch(statusUrl, { signal: controller.signal });
     return response.ok;
   } catch {
     return false;
   } finally {
     clearTimeout(timeout);
+  }
+};
+
+const waitForFingerprint = async (
+  fingerprintReady: Promise<string | null>,
+  timeoutMs: number
+): Promise<string | null> => {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<null>((resolve) => {
+    timeout = setTimeout(() => resolve(null), timeoutMs);
+  });
+
+  try {
+    return await Promise.race([fingerprintReady, timeoutPromise]);
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
   }
 };
 
@@ -145,6 +174,7 @@ const waitForGooseServeReady = async (
   shouldStopWaiting: () => boolean,
   options: {
     healthUrl: string;
+    readinessFetch: ReadinessFetch;
     onEvent?: (name: string, details?: Record<string, unknown>) => void;
   }
 ): Promise<boolean> => {
@@ -152,7 +182,7 @@ const waitForGooseServeReady = async (
   const interval = 100;
   const deadline = Date.now() + timeout;
   const probeDetails = {
-    transport: 'plain-http',
+    transport: statusUrl.startsWith('https:') ? 'https' : 'plain-http',
     method: 'GET',
     path: '/status',
     url: statusUrl,
@@ -185,7 +215,7 @@ const waitForGooseServeReady = async (
       return false;
     }
 
-    if (await fetchStatus(statusUrl)) {
+    if (await fetchStatus(statusUrl, options.readinessFetch)) {
       options.onEvent?.('healthcheck_success', {
         ...probeDetails,
         attempt,
@@ -201,18 +231,39 @@ const waitForGooseServeReady = async (
   return false;
 };
 
-const buildAcpUrl = (port: number, token: string): string => {
-  const url = new URL(`http://127.0.0.1:${port}/acp`);
-  url.protocol = 'ws:';
-  url.searchParams.set('token', token);
-  return url.toString();
-};
+export type LocalServeScheme = 'http' | 'https';
 
-const buildRedactedAcpUrl = (port: number): string => {
-  const url = new URL(`http://127.0.0.1:${port}/acp`);
-  url.protocol = 'ws:';
-  url.searchParams.set('token', 'REDACTED');
-  return url.toString();
+export interface LocalServeUrls {
+  httpBaseUrl: string;
+  statusUrl: string;
+  healthUrl: string;
+  acpUrl: string;
+  redactedAcpUrl: string;
+}
+
+export const buildLocalServeUrls = (
+  port: number,
+  token: string,
+  scheme: LocalServeScheme
+): LocalServeUrls => {
+  const httpBaseUrl = `${scheme}://127.0.0.1:${port}`;
+  const websocketProtocol = scheme === 'https' ? 'wss:' : 'ws:';
+
+  const acpUrl = new URL(`${httpBaseUrl}/acp`);
+  acpUrl.protocol = websocketProtocol;
+  acpUrl.searchParams.set('token', token);
+
+  const redactedAcpUrl = new URL(`${httpBaseUrl}/acp`);
+  redactedAcpUrl.protocol = websocketProtocol;
+  redactedAcpUrl.searchParams.set('token', 'REDACTED');
+
+  return {
+    httpBaseUrl,
+    statusUrl: `${httpBaseUrl}/status`,
+    healthUrl: `${httpBaseUrl}/health`,
+    acpUrl: acpUrl.toString(),
+    redactedAcpUrl: redactedAcpUrl.toString(),
+  };
 };
 
 const errorMessage = (error: unknown): string => {
@@ -267,11 +318,13 @@ const buildGooseServeEnv = (
 export const startGooseServe = async ({
   dir,
   serverSecret,
+  tls = false,
   env: additionalEnv = {},
   isPackaged,
   resourcesPath,
   logger = defaultLogger,
   diagnosticsDir,
+  readinessFetch = fetch,
 }: StartGooseServeOptions): Promise<GooseServeResult> => {
   const workingDir = dir || process.cwd();
   const startupTrace = createGooseServeStartupDiagnostics(diagnosticsDir, workingDir);
@@ -293,13 +346,23 @@ export const startGooseServe = async ({
   }
 
   const port = await findAvailablePort();
-  const httpBaseUrl = `http://127.0.0.1:${port}`;
-  const statusUrl = `${httpBaseUrl}/status`;
-  const healthUrl = `${httpBaseUrl}/health`;
-  const acpUrl = buildAcpUrl(port, secretKey);
-  const redactedAcpUrl = buildRedactedAcpUrl(port);
+  const localServeScheme: LocalServeScheme = tls ? 'https' : 'http';
+  const { httpBaseUrl, statusUrl, healthUrl, acpUrl, redactedAcpUrl } = buildLocalServeUrls(
+    port,
+    secretKey,
+    localServeScheme
+  );
   const errorLog: string[] = [];
-  const args = ['serve', '--platform', 'desktop', '--host', '127.0.0.1', '--port', String(port)];
+  const args = [
+    'serve',
+    ...(tls ? ['--tls'] : []),
+    '--platform',
+    'desktop',
+    '--host',
+    '127.0.0.1',
+    '--port',
+    String(port),
+  ];
 
   logger.info(`Starting goose serve from: ${goosePath} on port ${port} in dir ${workingDir}`);
   if (startupTrace) {
@@ -312,6 +375,7 @@ export const startGooseServe = async ({
     startupTrace.record('spawn_start', {
       binaryPath: goosePath,
       port,
+      tls,
       workingDir,
       args,
     });
@@ -348,8 +412,57 @@ export const startGooseServe = async ({
   let spawnFailed = false;
   let exitCode: number | null = null;
   let exitSignal: NodeJS.Signals | null = null;
+  let certFingerprint: string | null = null;
+  let stdoutBuffer = '';
+  let stdoutCollectionStopped = false;
+  let fingerprintReadyResolved = false;
+  let resolveFingerprintReady: (fingerprint: string | null) => void = () => {};
+  const fingerprintReady = new Promise<string | null>((resolve) => {
+    resolveFingerprintReady = resolve;
+  });
 
-  gooseProcess.stdout?.resume();
+  const resolveFingerprint = (fingerprint: string | null) => {
+    if (fingerprintReadyResolved) {
+      return;
+    }
+    fingerprintReadyResolved = true;
+    resolveFingerprintReady(fingerprint);
+  };
+
+  const stopStdoutCollection = () => {
+    if (stdoutCollectionStopped) {
+      return;
+    }
+    stdoutCollectionStopped = true;
+    gooseProcess.stdout?.off('data', onStdoutData);
+    gooseProcess.stdout?.resume();
+  };
+
+  const recordCertFingerprint = (fingerprint: string) => {
+    if (!fingerprint) {
+      return;
+    }
+    certFingerprint = fingerprint;
+    logger.info(`Pinned cert fingerprint: ${certFingerprint}`);
+    startupTrace?.record('fingerprint_received', { certFingerprint });
+    resolveFingerprint(certFingerprint);
+    stopStdoutCollection();
+  };
+
+  const onStdoutData = (data: Buffer) => {
+    stdoutBuffer += data.toString();
+    const lines = stdoutBuffer.split(/\r?\n/);
+    stdoutBuffer = lines.pop() ?? '';
+
+    for (const line of lines) {
+      if (line.startsWith(CERT_FINGERPRINT_PREFIX)) {
+        recordCertFingerprint(line.slice(CERT_FINGERPRINT_PREFIX.length).trim());
+        return;
+      }
+    }
+  };
+
+  gooseProcess.stdout?.on('data', onStdoutData);
 
   const onStderrData = (data: Buffer) => {
     const lines = data.toString().split('\n');
@@ -378,6 +491,7 @@ export const startGooseServe = async ({
       startupTrace.diagnostics.childExitSignal = signal;
       startupTrace.record('child_exit', { code, signal });
     }
+    resolveFingerprint(null);
   });
 
   gooseProcess.on('error', (error) => {
@@ -428,12 +542,18 @@ export const startGooseServe = async ({
 
   const ready = await waitForGooseServeReady(statusUrl, errorLog, () => exited || spawnFailed, {
     healthUrl,
+    readinessFetch,
     onEvent: startupTrace?.record,
   });
-  gooseProcess.stderr?.off('data', onStderrData);
-  gooseProcess.stderr?.resume();
+
+  const stopOutputCollection = () => {
+    stopStdoutCollection();
+    gooseProcess.stderr?.off('data', onStderrData);
+    gooseProcess.stderr?.resume();
+  };
 
   if (!ready) {
+    stopOutputCollection();
     await cleanup();
     const exitDetails = exited
       ? ` Process exited with code ${exitCode} and signal ${exitSignal}.`
@@ -447,11 +567,39 @@ export const startGooseServe = async ({
     );
   }
 
+  if (tls) {
+    startupTrace?.record('fingerprint_wait_start', { timeoutMs: TLS_FINGERPRINT_TIMEOUT_MS });
+    const fingerprint = await waitForFingerprint(fingerprintReady, TLS_FINGERPRINT_TIMEOUT_MS);
+    if (!fingerprint) {
+      stopOutputCollection();
+      await cleanup();
+      const exitDetails = exited
+        ? ` Process exited with code ${exitCode} and signal ${exitSignal}.`
+        : '';
+      const stderrDetails = errorLog.length ? ` Stderr: ${errorLog.join('\n')}` : '';
+      startupTrace?.record('fingerprint_missing', {
+        timeoutMs: TLS_FINGERPRINT_TIMEOUT_MS,
+        exited,
+        exitCode,
+        exitSignal,
+      });
+      throw new Error(
+        withStartupDiagnosticsPath(
+          `goose serve did not emit TLS certificate fingerprint on ${statusUrl}.${exitDetails}${stderrDetails}`,
+          startupDiagnosticsPath
+        )
+      );
+    }
+  }
+
+  stopOutputCollection();
+
   return {
     acpUrl,
     workingDir,
     process: gooseProcess,
     errorLog,
+    certFingerprint,
     cleanup,
     hasExited: () => exited,
     getExitDetails: () => ({ code: exitCode, signal: exitSignal }),

@@ -21,7 +21,7 @@ check-everything:
 # Default release command
 release-binary:
     @echo "Building release version..."
-    cargo build --release
+    cargo build --release -p goose-cli --bin goose
     @just copy-binary
     @echo "Generating OpenAPI schema..."
     cargo run -p goose-server --bin generate_schema
