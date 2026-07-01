@@ -72,17 +72,18 @@ describe('findGooseBinaryPath', () => {
     );
   });
 
-  it('prefers the debug target over the staged binary in development builds', () => {
+  it('prefers the staged binary over target builds in development builds', () => {
     const tempDir = makeTempDir();
     const desktopDir = path.join(tempDir, 'ui', 'desktop');
     const stagedPath = makeFile(path.join(desktopDir, 'src', 'bin', binaryName));
     const debugPath = makeFile(path.join(tempDir, 'target', 'debug', binaryName));
-    makeFile(path.join(tempDir, 'target', 'release', binaryName));
+    const releasePath = makeFile(path.join(tempDir, 'target', 'release', binaryName));
     process.chdir(desktopDir);
 
     const resolvedPath = findGooseBinaryPath({ isPackaged: false });
-    expect(fs.realpathSync(resolvedPath)).toBe(fs.realpathSync(debugPath));
-    expect(fs.realpathSync(resolvedPath)).not.toBe(fs.realpathSync(stagedPath));
+    expect(fs.realpathSync(resolvedPath)).toBe(fs.realpathSync(stagedPath));
+    expect(fs.realpathSync(resolvedPath)).not.toBe(fs.realpathSync(releasePath));
+    expect(fs.realpathSync(resolvedPath)).not.toBe(fs.realpathSync(debugPath));
   });
 
   it('uses the bundled goose binary in packaged builds', () => {
