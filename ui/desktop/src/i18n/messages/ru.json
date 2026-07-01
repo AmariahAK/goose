@@ -4229,6 +4229,9 @@
   "switchModelModal.loadingModels": {
     "defaultMessage": "Загрузка моделей…"
   },
+  "switchModelModal.checkingModel": {
+    "defaultMessage": "Проверка модели…"
+  },
   "switchModelModal.localModelsDescription": {
     "defaultMessage": "Чтобы использовать локальный инференс, сначала скачайте модель на компьютер. Перейдите в Настройки → Модели для управления локальными моделями."
   },
