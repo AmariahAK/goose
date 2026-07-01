@@ -44,6 +44,12 @@
   "appsView.retry": {
     "defaultMessage": "Réessayer"
   },
+  "appsView.retiredChatApp": {
+    "defaultMessage": "Chat app retired"
+  },
+  "appsView.retiredChatAppDetail": {
+    "defaultMessage": "We removed this feature because MCP sampling is no longer supported."
+  },
   "appsView.title": {
     "defaultMessage": "Applications"
   },
@@ -1169,6 +1175,9 @@
   "externalBackendSection.description": {
     "defaultMessage": "Par défaut, goose lance un serveur pour vous ; utilisez ceci pour vous connecter à un serveur goose externe"
   },
+  "externalBackendSection.fingerprintRequiresHttps": {
+    "defaultMessage": "Certificate fingerprint requires an https URL"
+  },
   "externalBackendSection.restartNote": {
     "defaultMessage": "Les modifications nécessitent le redémarrage de Goose pour prendre effet. Les nouvelles fenêtres de discussion se connecteront au serveur externe."
   },
@@ -1198,36 +1207,6 @@
   },
   "externalBackendSection.useExternalServerDescription": {
     "defaultMessage": "Se connecter à un serveur goose exécuté ailleurs (nécessite le redémarrage de l'application)"
-  },
-  "freeOptionCards.chooseOption": {
-    "defaultMessage": "Choisissez une option pour commencer."
-  },
-  "freeOptionCards.freeAndPrivate": {
-    "defaultMessage": "Gratuit et privé"
-  },
-  "freeOptionCards.localModelDescription": {
-    "defaultMessage": "Téléchargez un modèle et exécutez-le entièrement sur votre machine. Aucune clé d'API, aucun compte."
-  },
-  "freeOptionCards.localModelTitle": {
-    "defaultMessage": "Utiliser un modèle local"
-  },
-  "freeOptionCards.nanogptDescription": {
-    "defaultMessage": "Inscrivez-vous pour recevoir 60 M de jetons gratuits pendant 7 jours."
-  },
-  "freeOptionCards.nanogptTitle": {
-    "defaultMessage": "NanoGPT"
-  },
-  "freeOptionCards.retry": {
-    "defaultMessage": "Réessayer"
-  },
-  "freeOptionCards.tetrateDescription": {
-    "defaultMessage": "Accédez à plusieurs modèles d'IA avec une configuration automatique. Inscrivez-vous pour recevoir 10 $ de crédit."
-  },
-  "freeOptionCards.tetrateTitle": {
-    "defaultMessage": "Agent Router par Tetrate"
-  },
-  "freeOptionCards.unexpectedError": {
-    "defaultMessage": "Une erreur inattendue s'est produite lors de la configuration."
   },
   "goosehintsModal.close": {
     "defaultMessage": "Fermer"
@@ -1823,9 +1802,6 @@
   "localModelManager.showRecommendedOnly": {
     "defaultMessage": "Afficher uniquement les modèles recommandés"
   },
-  "localModelPicker.back": {
-    "defaultMessage": "Retour"
-  },
   "localModelPicker.bestForMachine": {
     "defaultMessage": "Idéal pour votre machine"
   },
@@ -1948,30 +1924,6 @@
   },
   "mcpAppRenderer.playingInPip": {
     "defaultMessage": "Lecture en Picture-in-Picture"
-  },
-  "mcpUIResourceRenderer.cancelButton": {
-    "defaultMessage": "Annuler"
-  },
-  "mcpUIResourceRenderer.openButton": {
-    "defaultMessage": "Ouvrir"
-  },
-  "mcpUIResourceRenderer.openExternalLinkTitle": {
-    "defaultMessage": "Ouvrir le lien externe"
-  },
-  "mcpUIResourceRenderer.openLinkDetail": {
-    "defaultMessage": "Cela ouvrira : {url}"
-  },
-  "mcpUIResourceRenderer.openProtocolLink": {
-    "defaultMessage": "Ouvrir le lien {protocol} ?"
-  },
-  "mcpUIResourceRenderer.toastMessageReceived": {
-    "defaultMessage": "Message reçu pour {message}."
-  },
-  "mcpUIResourceRenderer.toastTitle": {
-    "defaultMessage": "Message MCP-UI {messageType}"
-  },
-  "mcpUIResourceRenderer.toastUnsupported": {
-    "defaultMessage": "Message reçu pour {message}. Les messages {messageType} ne sont pas encore pris en charge, consultez la console pour plus de détails."
   },
   "mentionPopover.itemsFound": {
     "defaultMessage": "{count,plural,one{# élément trouvé} other{# éléments trouvés}}"
@@ -2810,14 +2762,14 @@
   "providerSelector.connectProviderDescription": {
     "defaultMessage": "Connectez OpenAI, Anthropic, Google, etc."
   },
-  "providerSelector.freeLocalDescription": {
-    "defaultMessage": "Utilisez un modèle local ou un fournisseur offrant des crédits gratuits"
+  "providerSelector.localModelDescription": {
+    "defaultMessage": "Téléchargez un modèle et exécutez-le entièrement sur votre machine. Aucune clé d'API, aucun compte."
   },
   "providerSelector.selectProvider": {
     "defaultMessage": "Sélectionner un fournisseur"
   },
-  "providerSelector.useFreeLocal": {
-    "defaultMessage": "Utiliser des fournisseurs gratuits/locaux"
+  "providerSelector.useLocalModel": {
+    "defaultMessage": "Utiliser un modèle local"
   },
   "providerSettings.configurationSettings": {
     "defaultMessage": "Paramètres de configuration du fournisseur"
@@ -4429,9 +4381,6 @@
   },
   "toolCallWithResponse.logs": {
     "defaultMessage": "Journaux"
-  },
-  "toolCallWithResponse.mcpUiExperimental": {
-    "defaultMessage": "L'interface MCP est expérimentale et peut changer à tout moment."
   },
   "toolCallWithResponse.output": {
     "defaultMessage": "Sortie"
