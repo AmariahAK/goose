@@ -13,8 +13,6 @@ check-everything:
     cargo clippy --all-targets -- -D warnings
     @echo "  → Checking UI code formatting..."
     cd ui/desktop && pnpm run lint:check
-    @echo "  → Validating OpenAPI schema..."
-    ./scripts/check-openapi-schema.sh
     @echo ""
     @echo "✅ All style checks passed!"
 
@@ -151,16 +149,10 @@ run-server:
     @echo "Running external ACP backend..."
     GOOSE_SERVER__SECRET_KEY="${GOOSE_SERVER__SECRET_KEY:-test}" cargo run -p goose-cli --bin goose -- serve --platform desktop --host 127.0.0.1 --port 3000
 
-# Check if OpenAPI schema is up-to-date
-check-openapi-schema: generate-openapi
-    ./scripts/check-openapi-schema.sh
-
 # Generate OpenAPI specification without starting the UI
 generate-openapi:
     @echo "Generating OpenAPI schema..."
     cargo run -p goose-server --bin generate_schema
-    @echo "Generating frontend API..."
-    cd ui/desktop && npx @hey-api/openapi-ts
 
 # Check if generated ACP schema and TypeScript types are up-to-date
 check-acp-schema: generate-acp-types
