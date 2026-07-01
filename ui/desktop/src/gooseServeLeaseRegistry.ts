@@ -1,4 +1,4 @@
-import type { GooseServeResult, Logger } from './gooseServe';
+import type { GooseServeExitSignal, GooseServeResult, Logger } from './gooseServe';
 
 export const GOOSE_SERVE_EXITED_USER_MESSAGE =
   "This window's Goose backend stopped. Close this window and open a new chat to start a new backend. If this keeps happening, restart Goose Desktop.";
@@ -10,7 +10,7 @@ export interface GooseServeLease {
   cleanedUp: boolean;
   exited: boolean;
   exitCode: number | null;
-  exitSignal: NodeJS.Signals | null;
+  exitSignal: GooseServeExitSignal;
 }
 
 export class GooseServeLeaseRegistry {
@@ -35,7 +35,7 @@ export class GooseServeLeaseRegistry {
       logUnexpected,
     }: {
       code?: number | null;
-      signal?: NodeJS.Signals | null;
+      signal?: GooseServeExitSignal;
       logUnexpected: boolean;
     }) => {
       const firstExit = !lease.exited;

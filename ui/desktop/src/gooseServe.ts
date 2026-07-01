@@ -24,7 +24,9 @@ export interface FindGooseBinaryOptions {
   resourcesPath?: string;
 }
 
-type ReadinessFetch = (input: string, init?: RequestInit) => Promise<Response>;
+type ReadinessFetchInit = Parameters<typeof globalThis.fetch>[1];
+export type GooseServeExitSignal = ChildProcess['signalCode'];
+type ReadinessFetch = (input: string, init?: ReadinessFetchInit) => Promise<Response>;
 
 export interface StartGooseServeOptions extends FindGooseBinaryOptions {
   dir?: string;
@@ -44,7 +46,7 @@ export interface GooseServeResult {
   certFingerprint: string | null;
   cleanup: () => Promise<void>;
   hasExited: () => boolean;
-  getExitDetails: () => { code: number | null; signal: NodeJS.Signals | null };
+  getExitDetails: () => { code: number | null; signal: GooseServeExitSignal };
   startupDiagnosticsPath: string | null;
   getStartupDiagnostics: () => GooseServeStartupDiagnostics | null;
   recordStartupEvent: (name: string, details?: Record<string, unknown>) => void;
@@ -411,7 +413,7 @@ export const startGooseServe = async ({
   let exited = false;
   let spawnFailed = false;
   let exitCode: number | null = null;
-  let exitSignal: NodeJS.Signals | null = null;
+  let exitSignal: GooseServeExitSignal = null;
   let certFingerprint: string | null = null;
   let stdoutBuffer = '';
   let stdoutCollectionStopped = false;

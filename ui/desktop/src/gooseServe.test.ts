@@ -7,6 +7,7 @@ import { buildLocalServeUrls, findGooseBinaryPath, startGooseServe } from './goo
 const binaryName = process.platform === 'win32' ? 'goose.exe' : 'goose';
 const tempDirs: string[] = [];
 const originalCwd = process.cwd();
+type ReadinessFetchInit = Parameters<typeof globalThis.fetch>[1];
 
 function makeTempDir(): string {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'goose-serve-test-'));
@@ -137,7 +138,7 @@ describe('startGooseServe', () => {
     vi.stubEnv('GOOSE_BINARY', goosePath);
 
     const readinessUrls: string[] = [];
-    const readinessFetch = vi.fn(async (input: string, _init?: RequestInit) => {
+    const readinessFetch = vi.fn(async (input: string, _init?: ReadinessFetchInit) => {
       readinessUrls.push(input);
       return new Response(null, { status: 200 });
     });
@@ -220,7 +221,7 @@ describe('startGooseServe', () => {
       info: vi.fn(),
       error: vi.fn(),
     };
-    const readinessFetch = vi.fn(async (input: string, _init?: RequestInit) => {
+    const readinessFetch = vi.fn(async (input: string, _init?: ReadinessFetchInit) => {
       readinessUrls.push(input);
       return new Response(null, { status: 200 });
     });

@@ -1362,9 +1362,8 @@ async fn handle_mcp_command(server: McpCommand) -> Result<()> {
 }
 
 async fn handle_serve_command(
-    
     host: String,
-   
+
     port: u16,
     tls: bool,
     tls_cert_path: Option<String>,
@@ -2182,7 +2181,18 @@ pub async fn cli() -> anyhow::Result<()> {
             tls_key_path,
             builtins,
             platform,
-        }) => handle_serve_command(host, port, tls, tls_cert_path, tls_key_path, builtins, platform).await,
+        }) => {
+            handle_serve_command(
+                host,
+                port,
+                tls,
+                tls_cert_path,
+                tls_key_path,
+                builtins,
+                platform,
+            )
+            .await
+        }
         Some(Command::Session {
             command: Some(cmd), ..
         }) => handle_session_subcommand(cmd).await,
