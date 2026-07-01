@@ -37,7 +37,6 @@
     "test:ui": "vitest --ui",
     "test:coverage": "vitest run --coverage",
     "test:integration": "vitest run --config vitest.integration.config.ts",
-    "test:integration:goosed": "vitest run --config vitest.integration.config.ts tests/integration/goosed.test.ts",
     "test:integration:providers": "vitest run --config vitest.integration.config.ts tests/integration/test_providers.test.ts",
     "test:integration:providers-code-exec": "vitest run --config vitest.integration.config.ts tests/integration/test_providers_code_exec.test.ts",
     "test:integration:watch": "vitest --config vitest.integration.config.ts",
