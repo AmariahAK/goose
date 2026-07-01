@@ -26,7 +26,6 @@ import os from 'node:os';
 import { execFileSync, spawn, execFile } from 'child_process';
 import 'dotenv/config';
 import { checkServerStatus } from './goosed';
-import { startGoosed } from './goosed';
 import { startGooseServe } from './gooseServe';
 import { GooseServeLeaseRegistry, type GooseServeLease } from './gooseServeLeaseRegistry';
 import { createClient, createConfig } from './api/client';
@@ -859,14 +858,6 @@ const getServerSecret = (settings: Settings): string => {
   return GENERATED_SECRET;
 };
 
-const buildAcpWebSocketUrl = (baseUrl: string, token: string): string => {
-  const url = new URL(baseUrl);
-  url.pathname = `${url.pathname.replace(/\/+$/, '')}/acp`;
-  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
-  url.searchParams.set('token', token);
-  return url.toString();
-};
-
 const createMainProcessBackendClient = (baseUrl: string, serverSecret: string): Client =>
   createClient(
     createConfig({
@@ -894,58 +885,9 @@ let appConfig = {
 };
 
 const windowMap = new Map<number, BrowserWindow>();
-const goosedClients = new Map<number, Client>();
 const appWindows = new Map<string, BrowserWindow>();
 
-interface GoosedLease {
-  client: Client;
-  cleanup: () => Promise<void>;
-  windowIds: Set<number>;
-  cleanedUp: boolean;
-}
-
-const goosedLeasesByWindowId = new Map<number, GoosedLease>();
 const gooseServeLeases = new GooseServeLeaseRegistry(log);
-
-const cleanupGoosedLease = async (lease: GoosedLease) => {
-  if (lease.cleanedUp) {
-    return;
-  }
-
-  lease.cleanedUp = true;
-  for (const windowId of lease.windowIds) {
-    goosedLeasesByWindowId.delete(windowId);
-    goosedClients.delete(windowId);
-  }
-  lease.windowIds.clear();
-
-  try {
-    await lease.cleanup();
-  } catch (error) {
-    log.error('Failed to cleanup goosed server:', error);
-  }
-};
-
-const attachWindowToGoosedLease = (windowId: number, lease: GoosedLease) => {
-  lease.windowIds.add(windowId);
-  goosedLeasesByWindowId.set(windowId, lease);
-  goosedClients.set(windowId, lease.client);
-};
-
-const releaseWindowGoosedLease = async (windowId: number) => {
-  const lease = goosedLeasesByWindowId.get(windowId);
-  goosedLeasesByWindowId.delete(windowId);
-  goosedClients.delete(windowId);
-
-  if (!lease) {
-    return;
-  }
-
-  lease.windowIds.delete(windowId);
-  if (lease.windowIds.size === 0) {
-    await cleanupGoosedLease(lease);
-  }
-};
 
 const windowPowerSaveBlockers = new Map<number, number>(); // windowId -> blockerId
 // Track pending initial messages per window
@@ -1018,63 +960,30 @@ const createChat = async (
     }
   }
 
-  const useAcpBackend: boolean = true;
   const externalBackend = settings.externalGoosed;
   const externalBackendEnabled = Boolean(externalBackend?.enabled && externalBackend.url);
-  const serverSecret =
-    useAcpBackend && !externalBackendEnabled ? GENERATED_SECRET : getServerSecret(settings);
-  let baseUrl = '';
+  const serverSecret = externalBackendEnabled ? getServerSecret(settings) : GENERATED_SECRET;
   let workingDir = dir || os.homedir();
-  let goosedResult: Awaited<ReturnType<typeof startGoosed>> | null = null;
   let gooseServeLease: GooseServeLease | null = null;
 
-  if (useAcpBackend) {
-    if (externalBackendEnabled && externalBackend?.url) {
-      try {
-        const externalBaseUrl = normalizeAcpHttpBaseUrl(externalBackend.url);
-        trustedExternalHostname = new URL(externalBaseUrl).hostname;
-        pinnedCertFingerprint = externalBackend.certFingerprint
-          ? normalizeFingerprint(externalBackend.certFingerprint)
-          : null;
+  if (externalBackendEnabled && externalBackend?.url) {
+    try {
+      const externalBaseUrl = normalizeAcpHttpBaseUrl(externalBackend.url);
+      trustedExternalHostname = new URL(externalBaseUrl).hostname;
+      pinnedCertFingerprint = externalBackend.certFingerprint
+        ? normalizeFingerprint(externalBackend.certFingerprint)
+        : null;
 
-        const externalBackendReady = await checkServerStatus(
-          createMainProcessBackendClient(externalBaseUrl, serverSecret),
-          []
-        );
-        if (!externalBackendReady) {
-          const response = dialog.showMessageBoxSync({
-            type: 'error',
-            title: 'External Backend Unreachable',
-            message: `Could not connect to external backend at ${externalBaseUrl}`,
-            detail: 'The external backend must be running and expose /status at the configured URL.',
-            buttons: ['Disable External Backend & Retry', 'Quit'],
-            defaultId: 0,
-            cancelId: 1,
-          });
-
-          if (response === 0) {
-            updateSettings((s) => {
-              if (s.externalGoosed) {
-                s.externalGoosed.enabled = false;
-              }
-            });
-            return createChat(app, options);
-          }
-
-          app.quit();
-          return;
-        }
-
-        gooseServeLease = gooseServeLeases.createExternal(
-          acpWebSocketUrlFromHttpBase(externalBaseUrl, serverSecret)
-        );
-      } catch (error) {
-        log.error('External ACP backend is misconfigured', error);
+      const externalBackendReady = await checkServerStatus(
+        createMainProcessBackendClient(externalBaseUrl, serverSecret),
+        []
+      );
+      if (!externalBackendReady) {
         const response = dialog.showMessageBoxSync({
           type: 'error',
-          title: 'External Backend Misconfigured',
-          message: 'The external backend URL is invalid.',
-          detail: errorMessage(error),
+          title: 'External Backend Unreachable',
+          message: `Could not connect to external backend at ${externalBaseUrl}`,
+          detail: 'The external backend must be running and expose /status at the configured URL.',
           buttons: ['Disable External Backend & Retry', 'Quit'],
           defaultId: 0,
           cancelId: 1,
@@ -1092,86 +1001,70 @@ const createChat = async (
         app.quit();
         return;
       }
-    } else {
-      trustedExternalHostname = null;
-      pinnedCertFingerprint = null;
 
-      let gooseServeResult: Awaited<ReturnType<typeof startGooseServe>>;
-      try {
-        gooseServeResult = await startGooseServe({
-          serverSecret,
-          dir: workingDir,
-          env: {
-            GOOSE_PATH_ROOT: appConfig.GOOSE_PATH_ROOT as string | undefined,
-          },
-          isPackaged: app.isPackaged,
-          resourcesPath: app.isPackaged ? process.resourcesPath : undefined,
-          logger: log,
-          diagnosticsDir: STARTUP_LOGS_DIR,
+      gooseServeLease = gooseServeLeases.createExternal(
+        acpWebSocketUrlFromHttpBase(externalBaseUrl, serverSecret)
+      );
+    } catch (error) {
+      log.error('External ACP backend is misconfigured', error);
+      const response = dialog.showMessageBoxSync({
+        type: 'error',
+        title: 'External Backend Misconfigured',
+        message: 'The external backend URL is invalid.',
+        detail: errorMessage(error),
+        buttons: ['Disable External Backend & Retry', 'Quit'],
+        defaultId: 0,
+        cancelId: 1,
+      });
+
+      if (response === 0) {
+        updateSettings((s) => {
+          if (s.externalGoosed) {
+            s.externalGoosed.enabled = false;
+          }
         });
-      } catch (error) {
-        log.error('goose serve failed to start', error);
-        dialog.showMessageBoxSync({
-          type: 'error',
-          title: 'Goose Failed to Start',
-          message: 'The backend server failed to start.',
-          detail: [
-            'Backend: goose serve',
-            'Readiness check: plain GET /status',
-            `Startup error:\n${errorMessage(error)}`,
-          ].join('\n\n'),
-          buttons: ['OK'],
-        });
-        app.quit();
-        return;
+        return createChat(app, options);
       }
 
-      workingDir = gooseServeResult.workingDir;
-      gooseServeLease = gooseServeLeases.create(gooseServeResult);
+      app.quit();
+      return;
     }
   } else {
-    // Update the cached trusted-external-hostname so the TLS handlers allow
-    // connections to the configured remote backend.
-    if (settings.externalGoosed?.enabled && settings.externalGoosed.url) {
-      try {
-        trustedExternalHostname = new URL(settings.externalGoosed.url).hostname;
-      } catch {
-        trustedExternalHostname = null;
-      }
-    } else {
-      trustedExternalHostname = null;
+    trustedExternalHostname = null;
+    pinnedCertFingerprint = null;
+
+    let gooseServeResult: Awaited<ReturnType<typeof startGooseServe>>;
+    try {
+      gooseServeResult = await startGooseServe({
+        serverSecret,
+        dir: workingDir,
+        env: {
+          GOOSE_PATH_ROOT: appConfig.GOOSE_PATH_ROOT as string | undefined,
+        },
+        isPackaged: app.isPackaged,
+        resourcesPath: app.isPackaged ? process.resourcesPath : undefined,
+        logger: log,
+        diagnosticsDir: STARTUP_LOGS_DIR,
+      });
+    } catch (error) {
+      log.error('goose serve failed to start', error);
+      dialog.showMessageBoxSync({
+        type: 'error',
+        title: 'Goose Failed to Start',
+        message: 'The backend server failed to start.',
+        detail: [
+          'Backend: goose serve',
+          'Readiness check: plain GET /status',
+          `Startup error:\n${errorMessage(error)}`,
+        ].join('\n\n'),
+        buttons: ['OK'],
+      });
+      app.quit();
+      return;
     }
 
-    // If the user provided a cert fingerprint for the external backend, pin it
-    // directly (skips TOFU). Otherwise reset so the first handshake pins via TOFU.
-    if (settings.externalGoosed?.enabled && settings.externalGoosed.certFingerprint) {
-      pinnedCertFingerprint = normalizeFingerprint(settings.externalGoosed.certFingerprint);
-    } else {
-      pinnedCertFingerprint = null;
-    }
-
-    goosedResult = await startGoosed({
-      serverSecret,
-      dir: workingDir,
-      env: {
-        GOOSE_PATH_ROOT: appConfig.GOOSE_PATH_ROOT as string | undefined,
-      },
-      externalGoosed: settings.externalGoosed,
-      isPackaged: app.isPackaged,
-      resourcesPath: app.isPackaged ? process.resourcesPath : undefined,
-      logger: log,
-      diagnosticsDir: STARTUP_LOGS_DIR,
-    });
-
-    // For locally-spawned goosed, pin using the fingerprint from stdout.
-    // For external backends the TOFU path in the cert handlers will pin
-    // the fingerprint on the first successful TLS handshake.
-    if (goosedResult.certFingerprint) {
-      pinnedCertFingerprint = goosedResult.certFingerprint;
-    }
-
-    baseUrl = goosedResult.baseUrl;
-    workingDir = goosedResult.workingDir;
+    workingDir = gooseServeResult.workingDir;
+    gooseServeLease = gooseServeLeases.create(gooseServeResult);
   }
 
   const cleanupUnregisteredGooseServeLease = async () => {
@@ -1256,92 +1149,6 @@ const createChat = async (
     })
       .then(() => log.info('added react dev tools'))
       .catch((err) => log.info('failed to install react dev tools:', err));
-  }
-
-  if (goosedResult) {
-    const {
-      errorLog,
-      stopErrorLogCollection,
-      startupDiagnosticsPath,
-      getStartupDiagnostics,
-      recordStartupEvent,
-    } = goosedResult;
-
-    // Re-create the client with Electron's net.fetch so requests to the local
-    // self-signed HTTPS server go through the session's certificate handling.
-    const goosedClient = createMainProcessBackendClient(baseUrl, serverSecret);
-    const goosedLease: GoosedLease = {
-      client: goosedClient,
-      cleanup: goosedResult.cleanup,
-      windowIds: new Set<number>(),
-      cleanedUp: false,
-    };
-    attachWindowToGoosedLease(mainWindow.id, goosedLease);
-    mainWindow.once('closed', () => {
-      void releaseWindowGoosedLease(mainWindow.id);
-    });
-
-    const serverReady = await checkServerStatus(goosedClient, errorLog, {
-      onEvent: recordStartupEvent,
-    });
-    if (!serverReady) {
-      const isUsingExternalBackend = settings.externalGoosed?.enabled;
-      const diagnostics = getStartupDiagnostics();
-      const stderrTail = diagnostics?.stderrTail ?? [];
-      const failureDetailParts = [
-        diagnostics?.childExitCode !== null || diagnostics?.childExitSignal
-          ? `Child exit: code=${diagnostics?.childExitCode ?? 'null'} signal=${diagnostics?.childExitSignal ?? 'null'}`
-          : 'Child exit: unavailable',
-        diagnostics?.certFingerprintSeen
-          ? 'TLS fingerprint observed: yes'
-          : 'TLS fingerprint observed: no',
-        diagnostics?.healthCheckSucceeded
-          ? 'Health check observed: yes'
-          : 'Health check observed: no',
-        startupDiagnosticsPath ? `Startup diagnostics: ${startupDiagnosticsPath}` : '',
-        errorLog.length > 0 ? `Startup errors:\n${errorLog.join('\n')}` : '',
-        stderrTail.length > 0 ? `Captured startup stderr:\n${stderrTail.join('\n')}` : '',
-      ].filter(Boolean);
-
-      if (isUsingExternalBackend) {
-        const response = dialog.showMessageBoxSync({
-          type: 'error',
-          title: 'External Backend Unreachable',
-          message: `Could not connect to external backend at ${settings.externalGoosed?.url}`,
-          detail: 'The external goosed server may not be running.',
-          buttons: ['Disable External Backend & Retry', 'Quit'],
-          defaultId: 0,
-          cancelId: 1,
-        });
-
-        if (response === 0) {
-          updateSettings((s) => {
-            if (s.externalGoosed) {
-              s.externalGoosed.enabled = false;
-            }
-          });
-          mainWindow.destroy();
-          return createChat(app, { initialMessage, dir });
-        }
-      } else {
-        dialog.showMessageBoxSync({
-          type: 'error',
-          title: 'Goose Failed to Start',
-          message: 'The backend server failed to start.',
-          detail: failureDetailParts.join('\n\n'),
-          buttons: ['OK'],
-        });
-      }
-      app.quit();
-      return;
-    }
-
-    // errorLog is only needed during startup to detect fatal errors.
-    // Stop collecting stderr to avoid unbounded memory growth over long sessions.
-    stopErrorLogCollection();
-    errorLog.length = 0;
-  } else if (!useAcpBackend) {
-    throw new Error('No desktop backend was started');
   }
 
   // Let windowStateKeeper manage the window
@@ -2026,17 +1833,7 @@ ipcMain.handle('get-acp-url', async (event) => {
   if (!windowId) {
     return null;
   }
-  const gooseServeAcpUrl = gooseServeLeases.getAcpUrl(windowId);
-  if (gooseServeAcpUrl) {
-    return gooseServeAcpUrl;
-  }
-
-  const client = goosedClients.get(windowId);
-  const baseUrl = client?.getConfig().baseUrl;
-  if (!baseUrl) {
-    return null;
-  }
-  return buildAcpWebSocketUrl(baseUrl, getServerSecret(getSettings()));
+  return gooseServeLeases.getAcpUrl(windowId) ?? null;
 });
 
 // Handle menu bar icon visibility
@@ -3034,9 +2831,8 @@ async function appMain() {
       }
 
       const launchingWindowId = launchingWindow.id;
-      const launchingGoosedLease = goosedLeasesByWindowId.get(launchingWindowId);
       const launchingGooseServeLease = gooseServeLeases.get(launchingWindowId);
-      if (!launchingGoosedLease && !launchingGooseServeLease) {
+      if (!launchingGooseServeLease) {
         throw new Error('No backend lease found for launching window');
       }
 
@@ -3064,21 +2860,12 @@ async function appMain() {
         },
       });
 
-      let releaseAppWindowBackend: () => Promise<void>;
-      if (launchingGoosedLease) {
-        attachWindowToGoosedLease(appWindow.id, launchingGoosedLease);
-        releaseAppWindowBackend = () => releaseWindowGoosedLease(appWindow.id);
-      } else if (launchingGooseServeLease) {
-        gooseServeLeases.attachWindow(appWindow.id, launchingGooseServeLease);
-        releaseAppWindowBackend = () => gooseServeLeases.releaseWindow(appWindow.id);
-      } else {
-        throw new Error('No backend lease found for launching window');
-      }
+      gooseServeLeases.attachWindow(appWindow.id, launchingGooseServeLease);
 
       appWindows.set(gooseApp.name, appWindow);
 
       appWindow.on('closed', () => {
-        void releaseAppWindowBackend();
+        void gooseServeLeases.releaseWindow(appWindow.id);
         appWindows.delete(gooseApp.name);
       });
 
@@ -3180,12 +2967,6 @@ async function getAllowList(): Promise<string[]> {
 }
 
 app.on('will-quit', async () => {
-  const goosedLeases = new Set(goosedLeasesByWindowId.values());
-  if (goosedLeases.size > 0) {
-    log.info(`App quitting, terminating ${goosedLeases.size} goosed server(s)`);
-    await Promise.all([...goosedLeases].map(cleanupGoosedLease));
-  }
-
   const gooseServeLeaseCount = gooseServeLeases.activeLeaseCount();
   if (gooseServeLeaseCount > 0) {
     log.info(`App quitting, terminating ${gooseServeLeaseCount} goose serve process(es)`);
