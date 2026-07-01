@@ -70,11 +70,15 @@ export class GooseServeLeaseRegistry {
     return lease;
   }
 
-  createExternal(acpUrl: string, secretKey: string): GooseServeLease {
+  createExternal(
+    acpUrl: string,
+    secretKey: string,
+    cleanup: () => Promise<void> = async () => undefined
+  ): GooseServeLease {
     return {
       acpUrl,
       secretKey,
-      cleanup: async () => undefined,
+      cleanup,
       windowIds: new Set<number>(),
       cleanedUp: false,
       exited: false,

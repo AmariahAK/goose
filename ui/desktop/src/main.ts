@@ -291,23 +291,23 @@ async function configureProxy() {
 
 if (started) app.quit();
 
-// Certificate trust for backend servers.
-// Both certificate-error (renderer) and setCertificateVerifyProc (main-process
-// net.fetch) pin to the exact cert fingerprint. External backends use
-// Trust-On-First-Use (TOFU) when no fingerprint is configured.
-let pinnedCertFingerprint: string | null = null;
-
-// Cached hostname of the configured external backend, updated when a
-// chat is created so we don't hit the filesystem on every TLS handshake.
-let trustedExternalHostname: string | null = null;
-
-function isLocalhost(hostname: string): boolean {
-  return hostname === '127.0.0.1' || hostname === 'localhost';
+// Certificate trust for active backend leases. Renderer requests and
+// main-process net.fetch both pin to the exact cert fingerprint. Each backend
+// lease owns a trust record so old windows keep working after settings change.
+interface BackendCertificateTrust {
+  hostname: string;
+  fingerprint: string | null;
 }
 
-function isTrustedHost(hostname: string): boolean {
-  if (isLocalhost(hostname)) return true;
-  return trustedExternalHostname !== null && hostname === trustedExternalHostname;
+interface BackendCertificateTrustRegistration {
+  trust: BackendCertificateTrust;
+  release: () => void;
+}
+
+const trustedBackendCertificates = new Set<BackendCertificateTrust>();
+
+function normalizeHostname(hostname: string): string {
+  return hostname.toLowerCase();
 }
 
 function normalizeFingerprint(fp: string): string {
@@ -322,6 +322,53 @@ function normalizeFingerprint(fp: string): string {
   return fp.toUpperCase();
 }
 
+function trustBackendCertificate(
+  hostname: string,
+  fingerprint: string | null
+): BackendCertificateTrustRegistration {
+  const trust: BackendCertificateTrust = {
+    hostname: normalizeHostname(hostname),
+    fingerprint: fingerprint ? normalizeFingerprint(fingerprint) : null,
+  };
+  trustedBackendCertificates.add(trust);
+  return {
+    trust,
+    release: () => {
+      trustedBackendCertificates.delete(trust);
+    },
+  };
+}
+
+function getBackendCertificateTrusts(hostname: string): BackendCertificateTrust[] {
+  const normalizedHostname = normalizeHostname(hostname);
+  return [...trustedBackendCertificates].filter((trust) => trust.hostname === normalizedHostname);
+}
+
+function verifyBackendCertificate(hostname: string, fingerprint: string): boolean {
+  const normalizedFingerprint = normalizeFingerprint(fingerprint);
+  const trusts = getBackendCertificateTrusts(hostname);
+  if (trusts.length === 0) {
+    return false;
+  }
+
+  if (trusts.some((trust) => trust.fingerprint === normalizedFingerprint)) {
+    return true;
+  }
+
+  const tofuTrust = trusts.find((trust) => trust.fingerprint === null);
+  if (tofuTrust) {
+    // TOFU: pin the certificate from the first successful handshake.
+    tofuTrust.fingerprint = normalizedFingerprint;
+    return true;
+  }
+
+  return false;
+}
+
+function isTrustedHost(hostname: string): boolean {
+  return getBackendCertificateTrusts(hostname).length > 0;
+}
+
 // Renderer requests: pin to the exact cert once known.
 app.on('certificate-error', (event, _webContents, url, _error, certificate, callback) => {
   const parsed = new URL(url);
@@ -329,17 +376,9 @@ app.on('certificate-error', (event, _webContents, url, _error, certificate, call
     callback(false);
     return;
   }
-  if (pinnedCertFingerprint) {
-    const match =
-      normalizeFingerprint(certificate.fingerprint) === pinnedCertFingerprint.toUpperCase();
-    event.preventDefault();
-    callback(match);
-  } else {
-    // TOFU: pin the certificate from the first successful handshake.
-    pinnedCertFingerprint = normalizeFingerprint(certificate.fingerprint);
-    event.preventDefault();
-    callback(true);
-  }
+
+  event.preventDefault();
+  callback(verifyBackendCertificate(parsed.hostname, certificate.fingerprint));
 });
 
 app.whenReady().then(() => {
@@ -353,14 +392,8 @@ app.whenReady().then(() => {
       callback(-3);
       return;
     }
-    if (!pinnedCertFingerprint) {
-      // TOFU: pin the certificate from the first successful handshake.
-      pinnedCertFingerprint = normalizeFingerprint(request.certificate.fingerprint);
-      callback(0);
-      return;
-    }
-    const match =
-      normalizeFingerprint(request.certificate.fingerprint) === pinnedCertFingerprint.toUpperCase();
+
+    const match = verifyBackendCertificate(request.hostname, request.certificate.fingerprint);
     callback(match ? 0 : -2);
   });
 });
@@ -1024,12 +1057,17 @@ const createChat = async (
   let gooseServeLease: GooseServeLease | null = null;
 
   if (externalBackend) {
+    let externalCertificateTrust: BackendCertificateTrustRegistration | null = null;
+
     try {
       const externalBaseUrl = normalizeAcpHttpBaseUrl(externalBackend.url);
-      trustedExternalHostname = new URL(externalBaseUrl).hostname;
-      pinnedCertFingerprint = externalBackend.certFingerprint
-        ? normalizeFingerprint(externalBackend.certFingerprint)
-        : null;
+      const externalBase = new URL(externalBaseUrl);
+      if (externalBase.protocol === 'https:') {
+        externalCertificateTrust = trustBackendCertificate(
+          externalBase.hostname,
+          externalBackend.certFingerprint ?? null
+        );
+      }
 
       const externalBackendReady = await checkBackendStatus({
         baseUrl: externalBaseUrl,
@@ -1037,6 +1075,7 @@ const createChat = async (
         fetch: net.fetch as unknown as typeof globalThis.fetch,
       });
       if (!externalBackendReady) {
+        externalCertificateTrust?.release();
         const canDisableExternalBackend = externalBackend.source === 'settings';
         const response = dialog.showMessageBoxSync({
           type: 'error',
@@ -1064,11 +1103,15 @@ const createChat = async (
         return;
       }
 
+      const leaseCertificateTrust = externalCertificateTrust;
+      externalCertificateTrust = null;
       gooseServeLease = gooseServeLeases.createExternal(
         acpWebSocketUrlFromHttpBase(externalBaseUrl, serverSecret),
-        serverSecret
+        serverSecret,
+        leaseCertificateTrust ? async () => leaseCertificateTrust.release() : undefined
       );
     } catch (error) {
+      externalCertificateTrust?.release();
       log.error('External ACP backend is misconfigured', error);
       const canDisableExternalBackend = externalBackend.source === 'settings';
       const response = dialog.showMessageBoxSync({
@@ -1096,8 +1139,7 @@ const createChat = async (
       return;
     }
   } else {
-    trustedExternalHostname = null;
-    pinnedCertFingerprint = null;
+    const localCertificateTrust = trustBackendCertificate('127.0.0.1', null);
 
     let gooseServeResult: Awaited<ReturnType<typeof startGooseServe>>;
     try {
@@ -1122,12 +1164,16 @@ const createChat = async (
       }
 
       const localCertFingerprint = normalizeFingerprint(gooseServeResult.certFingerprint);
-      if (pinnedCertFingerprint && pinnedCertFingerprint !== localCertFingerprint) {
+      if (
+        localCertificateTrust.trust.fingerprint &&
+        localCertificateTrust.trust.fingerprint !== localCertFingerprint
+      ) {
         await gooseServeResult.cleanup();
         throw new Error('goose serve TLS certificate fingerprint did not match readiness probe');
       }
-      pinnedCertFingerprint = localCertFingerprint;
+      localCertificateTrust.trust.fingerprint = localCertFingerprint;
     } catch (error) {
+      localCertificateTrust.release();
       log.error('goose serve failed to start', error);
       dialog.showMessageBoxSync({
         type: 'error',
@@ -1145,6 +1191,14 @@ const createChat = async (
     }
 
     workingDir = gooseServeResult.workingDir;
+    const cleanupGooseServe = gooseServeResult.cleanup;
+    gooseServeResult.cleanup = async () => {
+      try {
+        await cleanupGooseServe();
+      } finally {
+        localCertificateTrust.release();
+      }
+    };
     gooseServeLease = gooseServeLeases.create(gooseServeResult, serverSecret);
   }
 

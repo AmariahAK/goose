@@ -106,4 +106,22 @@ describe('GooseServeLeaseRegistry', () => {
     expect(store.getAcpUrl(1)).toBeNull();
     expect(store.getSecretKey(1)).toBeNull();
   });
+
+  it('cleans up external leases after the last attached window is released', async () => {
+    const cleanup = vi.fn(async () => undefined);
+    const store = new GooseServeLeaseRegistry(createLogger());
+    const lease = store.createExternal(
+      'wss://example.com/goose/acp?token=test',
+      'external-secret',
+      cleanup
+    );
+    store.attachWindow(1, lease);
+    store.attachWindow(2, lease);
+
+    await store.releaseWindow(1);
+    expect(cleanup).not.toHaveBeenCalled();
+
+    await store.releaseWindow(2);
+    expect(cleanup).toHaveBeenCalledTimes(1);
+  });
 });
