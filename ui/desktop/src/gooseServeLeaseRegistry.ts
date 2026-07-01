@@ -68,6 +68,18 @@ export class GooseServeLeaseRegistry {
     return lease;
   }
 
+  createExternal(acpUrl: string): GooseServeLease {
+    return {
+      acpUrl,
+      cleanup: async () => undefined,
+      windowIds: new Set<number>(),
+      cleanedUp: false,
+      exited: false,
+      exitCode: null,
+      exitSignal: null,
+    };
+  }
+
   get(windowId: number): GooseServeLease | null {
     return this.leasesByWindowId.get(windowId) ?? null;
   }

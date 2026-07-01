@@ -30,6 +30,7 @@ import { startGoosed } from './goosed';
 import { startGooseServe } from './gooseServe';
 import { GooseServeLeaseRegistry, type GooseServeLease } from './gooseServeLeaseRegistry';
 import { createClient, createConfig } from './api/client';
+import { acpWebSocketUrlFromHttpBase, normalizeAcpHttpBaseUrl } from './acp/url';
 import { expandTilde } from './utils/pathUtils';
 import log from './utils/logger';
 import { ensureWinShims } from './utils/winShims';
@@ -866,12 +867,22 @@ const buildAcpWebSocketUrl = (baseUrl: string, token: string): string => {
   return url.toString();
 };
 
+const createMainProcessBackendClient = (baseUrl: string, serverSecret: string): Client =>
+  createClient(
+    createConfig({
+      baseUrl,
+      fetch: net.fetch as unknown as typeof globalThis.fetch,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Secret-Key': serverSecret,
+      },
+    })
+  );
+
 let appConfig = {
   GOOSE_DEFAULT_PROVIDER: defaultProvider,
   GOOSE_DEFAULT_MODEL: defaultModel,
   GOOSE_PREDEFINED_MODELS: predefinedModels,
-  GOOSE_API_HOST: 'https://localhost',
-  GOOSE_DESKTOP_BACKEND: process.env.GOOSE_DESKTOP_BACKEND,
   GOOSE_PATH_ROOT: resolveGoosePathRoot(),
   GOOSE_WORKING_DIR: '',
   // Start with the env-var override; the OS region locale is filled in after app.ready
@@ -970,6 +981,8 @@ const createChat = async (
   } = options;
   const settings = getSettings();
 
+  // `externalGoosed` is a legacy name kept for on-disk settings compatibility;
+  // the remote backend it points at is now an ACP server, not goosed.
   if (settings.externalGoosed?.enabled && settings.externalGoosed.certFingerprint) {
     const url = settings.externalGoosed.url;
     const usesHttps = (() => {
@@ -1005,49 +1018,117 @@ const createChat = async (
     }
   }
 
-  const backendAcpOnly = appConfig.GOOSE_DESKTOP_BACKEND === 'acp';
-  const serverSecret = backendAcpOnly ? GENERATED_SECRET : getServerSecret(settings);
+  const useAcpBackend: boolean = true;
+  const externalBackend = settings.externalGoosed;
+  const externalBackendEnabled = Boolean(externalBackend?.enabled && externalBackend.url);
+  const serverSecret =
+    useAcpBackend && !externalBackendEnabled ? GENERATED_SECRET : getServerSecret(settings);
   let baseUrl = '';
   let workingDir = dir || os.homedir();
   let goosedResult: Awaited<ReturnType<typeof startGoosed>> | null = null;
   let gooseServeLease: GooseServeLease | null = null;
 
-  if (backendAcpOnly) {
-    trustedExternalHostname = null;
-    pinnedCertFingerprint = null;
+  if (useAcpBackend) {
+    if (externalBackendEnabled && externalBackend?.url) {
+      try {
+        const externalBaseUrl = normalizeAcpHttpBaseUrl(externalBackend.url);
+        trustedExternalHostname = new URL(externalBaseUrl).hostname;
+        pinnedCertFingerprint = externalBackend.certFingerprint
+          ? normalizeFingerprint(externalBackend.certFingerprint)
+          : null;
 
-    let gooseServeResult: Awaited<ReturnType<typeof startGooseServe>>;
-    try {
-      gooseServeResult = await startGooseServe({
-        serverSecret,
-        dir: workingDir,
-        env: {
-          GOOSE_PATH_ROOT: appConfig.GOOSE_PATH_ROOT as string | undefined,
-        },
-        isPackaged: app.isPackaged,
-        resourcesPath: app.isPackaged ? process.resourcesPath : undefined,
-        logger: log,
-        diagnosticsDir: STARTUP_LOGS_DIR,
-      });
-    } catch (error) {
-      log.error('goose serve failed to start', error);
-      dialog.showMessageBoxSync({
-        type: 'error',
-        title: 'Goose Failed to Start',
-        message: 'The backend server failed to start.',
-        detail: [
-          'Backend: goose serve',
-          'Readiness check: plain GET /status',
-          `Startup error:\n${errorMessage(error)}`,
-        ].join('\n\n'),
-        buttons: ['OK'],
-      });
-      app.quit();
-      return;
+        const externalBackendReady = await checkServerStatus(
+          createMainProcessBackendClient(externalBaseUrl, serverSecret),
+          []
+        );
+        if (!externalBackendReady) {
+          const response = dialog.showMessageBoxSync({
+            type: 'error',
+            title: 'External Backend Unreachable',
+            message: `Could not connect to external backend at ${externalBaseUrl}`,
+            detail: 'The external backend must be running and expose /status at the configured URL.',
+            buttons: ['Disable External Backend & Retry', 'Quit'],
+            defaultId: 0,
+            cancelId: 1,
+          });
+
+          if (response === 0) {
+            updateSettings((s) => {
+              if (s.externalGoosed) {
+                s.externalGoosed.enabled = false;
+              }
+            });
+            return createChat(app, options);
+          }
+
+          app.quit();
+          return;
+        }
+
+        gooseServeLease = gooseServeLeases.createExternal(
+          acpWebSocketUrlFromHttpBase(externalBaseUrl, serverSecret)
+        );
+      } catch (error) {
+        log.error('External ACP backend is misconfigured', error);
+        const response = dialog.showMessageBoxSync({
+          type: 'error',
+          title: 'External Backend Misconfigured',
+          message: 'The external backend URL is invalid.',
+          detail: errorMessage(error),
+          buttons: ['Disable External Backend & Retry', 'Quit'],
+          defaultId: 0,
+          cancelId: 1,
+        });
+
+        if (response === 0) {
+          updateSettings((s) => {
+            if (s.externalGoosed) {
+              s.externalGoosed.enabled = false;
+            }
+          });
+          return createChat(app, options);
+        }
+
+        app.quit();
+        return;
+      }
+    } else {
+      trustedExternalHostname = null;
+      pinnedCertFingerprint = null;
+
+      let gooseServeResult: Awaited<ReturnType<typeof startGooseServe>>;
+      try {
+        gooseServeResult = await startGooseServe({
+          serverSecret,
+          dir: workingDir,
+          env: {
+            GOOSE_PATH_ROOT: appConfig.GOOSE_PATH_ROOT as string | undefined,
+          },
+          isPackaged: app.isPackaged,
+          resourcesPath: app.isPackaged ? process.resourcesPath : undefined,
+          logger: log,
+          diagnosticsDir: STARTUP_LOGS_DIR,
+        });
+      } catch (error) {
+        log.error('goose serve failed to start', error);
+        dialog.showMessageBoxSync({
+          type: 'error',
+          title: 'Goose Failed to Start',
+          message: 'The backend server failed to start.',
+          detail: [
+            'Backend: goose serve',
+            'Readiness check: plain GET /status',
+            `Startup error:\n${errorMessage(error)}`,
+          ].join('\n\n'),
+          buttons: ['OK'],
+        });
+        app.quit();
+        return;
+      }
+
+      workingDir = gooseServeResult.workingDir;
+      gooseServeLease = gooseServeLeases.create(gooseServeResult);
     }
-
-    workingDir = gooseServeResult.workingDir;
-    gooseServeLease = gooseServeLeases.create(gooseServeResult);
   } else {
     // Update the cached trusted-external-hostname so the TLS handlers allow
     // connections to the configured remote backend.
@@ -1138,7 +1219,6 @@ const createChat = async (
           JSON.stringify({
             ...appConfig,
             GOOSE_LOCALE: getConfiguredGooseLocale(),
-            GOOSE_API_HOST: baseUrl,
             GOOSE_WORKING_DIR: workingDir,
             REQUEST_DIR: dir,
             GOOSE_VERSION: version,
@@ -1189,16 +1269,7 @@ const createChat = async (
 
     // Re-create the client with Electron's net.fetch so requests to the local
     // self-signed HTTPS server go through the session's certificate handling.
-    const goosedClient = createClient(
-      createConfig({
-        baseUrl,
-        fetch: net.fetch as unknown as typeof globalThis.fetch,
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Secret-Key': serverSecret,
-        },
-      })
-    );
+    const goosedClient = createMainProcessBackendClient(baseUrl, serverSecret);
     const goosedLease: GoosedLease = {
       client: goosedClient,
       cleanup: goosedResult.cleanup,
@@ -1269,7 +1340,7 @@ const createChat = async (
     // Stop collecting stderr to avoid unbounded memory growth over long sessions.
     stopErrorLogCollection();
     errorLog.length = 0;
-  } else if (!backendAcpOnly) {
+  } else if (!useAcpBackend) {
     throw new Error('No desktop backend was started');
   }
 
@@ -1943,24 +2014,11 @@ ipcMain.handle('set-setting', (_event, key: SettingKey, value: unknown) => {
 });
 
 ipcMain.handle('get-secret-key', () => {
-  if (appConfig.GOOSE_DESKTOP_BACKEND === 'acp') {
-    return GENERATED_SECRET;
-  }
-
   const settings = getSettings();
-  return getServerSecret(settings);
-});
-
-ipcMain.handle('get-goosed-host-port', async (event) => {
-  const windowId = BrowserWindow.fromWebContents(event.sender)?.id;
-  if (!windowId) {
-    return null;
+  if (settings.externalGoosed?.enabled && settings.externalGoosed.url) {
+    return getServerSecret(settings);
   }
-  const client = goosedClients.get(windowId);
-  if (!client) {
-    return null;
-  }
-  return client.getConfig().baseUrl || null;
+  return GENERATED_SECRET;
 });
 
 ipcMain.handle('get-acp-url', async (event) => {
@@ -2983,8 +3041,6 @@ async function appMain() {
       }
 
       const workingDir = app.getPath('home');
-      const restApiHost = launchingGoosedLease?.client.getConfig().baseUrl ?? '';
-
       const appWindow = new BrowserWindow({
         title: formatAppName(gooseApp.name),
         width: gooseApp.width ?? 800,
@@ -3000,7 +3056,6 @@ async function appMain() {
             JSON.stringify({
               ...appConfig,
               GOOSE_LOCALE: getConfiguredGooseLocale(),
-              GOOSE_API_HOST: restApiHost,
               GOOSE_WORKING_DIR: workingDir,
               GOOSE_VERSION: version,
             }),

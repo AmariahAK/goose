@@ -4,7 +4,6 @@ import { IntlProvider } from 'react-intl';
 import { ConfigProvider } from './components/ConfigContext';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import SuspenseLoader from './suspense-loader';
-import { client } from './api/client.gen';
 import { applyThemeTokens } from './theme/theme-tokens';
 import { currentLocale, currentMessageLocale, loadMessages } from './i18n';
 
@@ -28,27 +27,6 @@ function handleIntlError(err: { code: string; message?: string }) {
 }
 
 (async () => {
-  // Check if we're in the launcher view (doesn't need goosed connection)
-  const isLauncher = window.location.hash === '#/launcher';
-
-  if (!isLauncher) {
-    const backendAcpOnly = window.appConfig.get('GOOSE_DESKTOP_BACKEND') === 'acp';
-    if (!backendAcpOnly) {
-      const gooseApiHost = await window.electron.getGoosedHostPort();
-      if (gooseApiHost === null) {
-        window.alert('failed to start goose backend process');
-        return;
-      }
-      client.setConfig({
-        baseUrl: gooseApiHost,
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Secret-Key': await window.electron.getSecretKey(),
-        },
-      });
-    }
-  }
-
   const messages = await loadMessages(currentMessageLocale);
 
   ReactDOM.createRoot(document.getElementById('root')!).render(

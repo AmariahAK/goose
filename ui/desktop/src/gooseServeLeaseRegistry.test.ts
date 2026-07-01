@@ -86,4 +86,16 @@ describe('GooseServeLeaseRegistry', () => {
     expect(cleanup).toHaveBeenCalledTimes(1);
     expect(store.getAcpUrl(2)).toBeNull();
   });
+
+  it('creates an external ACP lease without process cleanup', async () => {
+    const store = new GooseServeLeaseRegistry(createLogger());
+    const lease = store.createExternal('wss://example.com/goose/acp?token=test');
+
+    store.attachWindow(1, lease);
+
+    expect(store.getAcpUrl(1)).toBe('wss://example.com/goose/acp?token=test');
+
+    await store.releaseWindow(1);
+    expect(store.getAcpUrl(1)).toBeNull();
+  });
 });
