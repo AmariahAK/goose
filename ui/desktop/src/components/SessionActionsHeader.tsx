@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type KeyboardEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import {
   Activity,
   ChevronDown,
@@ -361,6 +361,7 @@ export default function SessionActionsHeader({
   const [isModelInteractionsLoading, setIsModelInteractionsLoading] = useState(false);
   const [isDuplicating, setIsDuplicating] = useState(false);
   const [fullTextSelection, setFullTextSelection] = useState<FullTextSelection | null>(null);
+  const jsonLoadRequestId = useRef(0);
 
   const title = useMemo(() => (session ? getSessionDisplayName(session) : ''), [session]);
 
@@ -425,17 +426,21 @@ export default function SessionActionsHeader({
   const handleViewJson = useCallback(async () => {
     if (!session) return;
 
+    const loadRequestId = ++jsonLoadRequestId.current;
     setIsJsonOpen(true);
     setJsonDialogKind('session');
     setJsonValue(null);
     setJsonText('');
+    setIsModelInteractionsLoading(false);
     setIsJsonLoading(true);
     try {
       const json = await acpExportSession(session.id);
       const parsed = parseSessionJson(json);
+      if (jsonLoadRequestId.current !== loadRequestId) return;
       setJsonValue(parsed.value);
       setJsonText(parsed.pretty);
     } catch (error) {
+      if (jsonLoadRequestId.current !== loadRequestId) return;
       setIsJsonOpen(false);
       toast.error(
         intl.formatMessage(i18n.jsonFailed, {
@@ -443,17 +448,21 @@ export default function SessionActionsHeader({
         })
       );
     } finally {
-      setIsJsonLoading(false);
+      if (jsonLoadRequestId.current === loadRequestId) {
+        setIsJsonLoading(false);
+      }
     }
   }, [intl, session]);
 
   const handleViewModelInteractions = useCallback(async () => {
     if (!session) return;
 
+    const loadRequestId = ++jsonLoadRequestId.current;
     setIsJsonOpen(true);
     setJsonDialogKind('modelInteractions');
     setJsonValue(null);
     setJsonText('');
+    setIsJsonLoading(false);
     setIsModelInteractionsLoading(true);
     try {
       const report = await getDiagnosticsReport(session.id, 'full');
@@ -466,9 +475,11 @@ export default function SessionActionsHeader({
           .map(parseJsonLine),
       }));
       const text = JSON.stringify(interactions, null, 2);
+      if (jsonLoadRequestId.current !== loadRequestId) return;
       setJsonValue(interactions);
       setJsonText(text);
     } catch (error) {
+      if (jsonLoadRequestId.current !== loadRequestId) return;
       setIsJsonOpen(false);
       toast.error(
         intl.formatMessage(i18n.modelInteractionsFailed, {
@@ -476,7 +487,9 @@ export default function SessionActionsHeader({
         })
       );
     } finally {
-      setIsModelInteractionsLoading(false);
+      if (jsonLoadRequestId.current === loadRequestId) {
+        setIsModelInteractionsLoading(false);
+      }
     }
   }, [intl, session]);
 
@@ -499,6 +512,9 @@ export default function SessionActionsHeader({
   const handleJsonOpenChange = useCallback((open: boolean) => {
     setIsJsonOpen(open);
     if (!open) {
+      jsonLoadRequestId.current += 1;
+      setIsJsonLoading(false);
+      setIsModelInteractionsLoading(false);
       setFullTextSelection(null);
     }
   }, []);
