@@ -507,9 +507,10 @@ impl CliSession {
 
     async fn run_interactive(&mut self, prompt: Option<String>) -> Result<()> {
         // Advertise mid-run steering in the thinking spinner when the steer
-        // reader will be active (interactive tty session).
+        // reader will be active (interactive tty session on a platform that
+        // supports mid-run stdin reading).
         output::set_steer_hint_enabled(
-            std::io::stdin().is_terminal() && std::io::stdout().is_terminal(),
+            cfg!(unix) && std::io::stdin().is_terminal() && std::io::stdout().is_terminal(),
         );
         if let Some(prompt) = prompt {
             let msg = Message::user().with_text(&prompt);
@@ -1210,7 +1211,9 @@ impl CliSession {
             && std::io::stdin().is_terminal()
             && std::io::stdout().is_terminal();
         let (steer_control, mut steer_rx) = steer::spawn_steer_reader(steer_enabled);
-        if steer_enabled {
+        // Only advertise steering when a reader actually started (it does
+        // not on non-unix platforms even when `steer_enabled` is true).
+        if steer_control.is_active() {
             output::render_steer_hint();
         }
 

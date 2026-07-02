@@ -67,6 +67,15 @@ pub fn spawn_steer_reader(enabled: bool) -> (SteerControl, mpsc::UnboundedReceiv
     )
 }
 
+impl SteerControl {
+    /// Whether a reader thread is actually running. False when steering was
+    /// disabled or the platform does not support mid-run stdin reading
+    /// (non-unix), in which case no steering UI should be shown.
+    pub fn is_active(&self) -> bool {
+        self.handle.is_some()
+    }
+}
+
 pub struct SteerControl {
     stop: Arc<AtomicBool>,
     paused: Arc<AtomicBool>,
