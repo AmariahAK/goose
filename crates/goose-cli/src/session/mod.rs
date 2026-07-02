@@ -1210,6 +1210,9 @@ impl CliSession {
             && std::io::stdin().is_terminal()
             && std::io::stdout().is_terminal();
         let (steer_control, mut steer_rx) = steer::spawn_steer_reader(steer_enabled);
+        if steer_enabled {
+            output::render_steer_hint();
+        }
 
         let mut stream = self
             .agent

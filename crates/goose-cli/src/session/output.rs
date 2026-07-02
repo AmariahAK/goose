@@ -439,6 +439,24 @@ pub fn render_text_no_newlines(text: &str, color: Option<Color>, dim: bool) {
     print!("{}", styled_text);
 }
 
+/// Print a faint hint that mid-run steering is available. Safe to call while
+/// the thinking spinner is active: the spinner is hidden first and restored
+/// after so it doesn't duplicate its line.
+pub fn render_steer_hint() {
+    if !std::io::stdout().is_terminal() {
+        return;
+    }
+    let was_thinking = THINKING.with(|t| t.borrow().is_shown());
+    hide_thinking();
+    println!(
+        "{}",
+        style("↳ type a steering message and press Enter to queue it").dim()
+    );
+    if was_thinking {
+        show_thinking();
+    }
+}
+
 /// Draw the live steer compose line. Called on every keystroke while the
 /// user types mid-run. When `in_place` is true the compose line was the last
 /// thing drawn, so it is redrawn over itself; otherwise it starts on a fresh
