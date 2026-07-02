@@ -3,6 +3,7 @@ import path from 'node:path';
 export const PACKAGED_RENDERER_PROTOCOL = 'goose-app';
 export const PACKAGED_RENDERER_HOST = 'goose';
 export const PACKAGED_RENDERER_ORIGIN = `${PACKAGED_RENDERER_PROTOCOL}://${PACKAGED_RENDERER_HOST}`;
+export const GOOSE_SESSION_PARTITION = 'persist:goose';
 
 export function packagedRendererUrl(): URL {
   return new URL(`${PACKAGED_RENDERER_ORIGIN}/index.html`);

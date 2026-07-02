@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
+  GOOSE_SESSION_PARTITION,
   PACKAGED_RENDERER_ORIGIN,
   packagedRendererUrl,
   rendererContentType,
@@ -10,6 +11,7 @@ import {
 describe('appProtocol', () => {
   it('uses the packaged renderer app origin', () => {
     expect(PACKAGED_RENDERER_ORIGIN).toBe('goose-app://goose');
+    expect(GOOSE_SESSION_PARTITION).toBe('persist:goose');
     expect(packagedRendererUrl().toString()).toBe('goose-app://goose/index.html');
   });
 

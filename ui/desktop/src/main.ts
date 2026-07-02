@@ -56,6 +56,7 @@ import installExtension, { REACT_DEVELOPER_TOOLS } from 'electron-devtools-insta
 import { BLOCKED_PROTOCOLS, WEB_PROTOCOLS } from './utils/urlSecurity';
 import { buildCSP } from './utils/csp';
 import {
+  GOOSE_SESSION_PARTITION,
   PACKAGED_RENDERER_ORIGIN,
   PACKAGED_RENDERER_PROTOCOL,
   packagedRendererUrl,
@@ -848,23 +849,25 @@ function registerPackagedRendererProtocol() {
     return;
   }
 
-  protocol.handle(PACKAGED_RENDERER_PROTOCOL, async (request) => {
-    const filePath = resolvePackagedRendererPath(request.url, getPackagedRendererRoot());
-    if (!filePath) {
-      return new Response('Not found', { status: 404 });
-    }
+  session
+    .fromPartition(GOOSE_SESSION_PARTITION)
+    .protocol.handle(PACKAGED_RENDERER_PROTOCOL, async (request) => {
+      const filePath = resolvePackagedRendererPath(request.url, getPackagedRendererRoot());
+      if (!filePath) {
+        return new Response('Not found', { status: 404 });
+      }
 
-    try {
-      const data = await fs.readFile(filePath);
-      return new Response(new Uint8Array(data), {
-        headers: {
-          'Content-Type': rendererContentType(filePath),
-        },
-      });
-    } catch {
-      return new Response('Not found', { status: 404 });
-    }
-  });
+      try {
+        const data = await fs.readFile(filePath);
+        return new Response(new Uint8Array(data), {
+          headers: {
+            'Content-Type': rendererContentType(filePath),
+          },
+        });
+      } catch {
+        return new Response('Not found', { status: 404 });
+      }
+    });
   packagedRendererProtocolRegistered = true;
 }
 
@@ -1316,7 +1319,7 @@ const createChat = async (
               process.env.SECURITY_COMMAND_CLASSIFIER_ENABLED_OVERRIDE,
           }),
         ],
-        partition: 'persist:goose',
+        partition: GOOSE_SESSION_PARTITION,
       },
     });
   } catch (error) {
@@ -1582,7 +1585,7 @@ const createLauncher = () => {
           GOOSE_LOCALE: getConfiguredGooseLocale(),
         }),
       ],
-      partition: 'persist:goose',
+      partition: GOOSE_SESSION_PARTITION,
     },
     skipTaskbar: true,
     alwaysOnTop: true,
@@ -3048,7 +3051,7 @@ async function appMain() {
               GOOSE_VERSION: version,
             }),
           ],
-          partition: 'persist:goose',
+          partition: GOOSE_SESSION_PARTITION,
         },
       });
 
