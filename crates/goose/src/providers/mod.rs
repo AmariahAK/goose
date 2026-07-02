@@ -8,8 +8,13 @@ pub mod api_client {
     pub use goose_providers::api_client::*;
 }
 pub mod avian;
-pub mod azure;
-pub mod azureauth;
+pub mod azure {
+    pub use goose_providers::azure::*;
+}
+pub mod azureauth {
+    pub use goose_providers::azureauth::*;
+}
+pub mod azure_def;
 pub mod base;
 #[cfg(feature = "aws-providers")]
 pub mod bedrock;

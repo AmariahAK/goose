@@ -10,7 +10,7 @@ use super::sagemaker_tgi::SageMakerTgiProvider;
 use super::{
     amp_acp::AmpAcpProvider,
     avian::AvianProvider,
-    azure::AzureProvider,
+    azure_def::AzureProviderDef,
     base::{Provider, ProviderMetadata},
     chatgpt_codex::ChatGptCodexProvider,
     claude_acp::ClaudeAcpProvider,
@@ -68,7 +68,7 @@ async fn init_registry() -> RwLock<ProviderRegistry> {
             Some(registrations::anthropic_inventory()),
         );
         registry.register::<AvianProvider>(false);
-        registry.register::<AzureProvider>(false);
+        registry.register::<AzureProviderDef>(false);
         #[cfg(feature = "aws-providers")]
         registry.register::<BedrockProvider>(false);
         #[cfg(feature = "local-inference")]

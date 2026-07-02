@@ -1,21 +1,20 @@
 use anyhow::Result;
 use async_trait::async_trait;
 
-use super::api_client::{ApiClient, AuthMethod, AuthProvider};
-use super::azureauth::{AuthError, AzureAuth};
-use super::base::{ConfigKey, ProviderDef, ProviderMetadata};
-use super::openai_compatible::OpenAiCompatibleProvider;
-use futures::future::BoxFuture;
+use crate::api_client::{ApiClient, AuthMethod, AuthProvider, RequestBuilderDecorator, TlsConfig};
+use crate::azureauth::{AuthError, AzureAuth};
+use crate::base::{ConfigKey, ProviderMetadata};
+use crate::openai_compatible::OpenAiCompatibleProvider;
 
-const AZURE_PROVIDER_NAME: &str = "azure_openai";
+pub const AZURE_PROVIDER_NAME: &str = "azure_openai";
 pub const AZURE_DEFAULT_MODEL: &str = "gpt-4o";
 pub const AZURE_DOC_URL: &str =
     "https://learn.microsoft.com/en-us/azure/ai-services/openai/concepts/models";
-const AZURE_DEFAULT_API_VERSION: &str = "2024-10-21";
+pub const AZURE_DEFAULT_API_VERSION: &str = "2024-10-21";
 pub const AZURE_OPENAI_KNOWN_MODELS: &[&str] = &["gpt-4o", "gpt-4o-mini", "gpt-4"];
 
 /// New-style Azure AI endpoints use `/v1/` paths and reject the `api-version` query param.
-fn is_v1_endpoint(endpoint: &str) -> bool {
+pub fn is_v1_endpoint(endpoint: &str) -> bool {
     let normalized = endpoint.trim_end_matches('/');
     normalized.ends_with("/v1") || endpoint.contains("/v1/")
 }
@@ -37,11 +36,11 @@ impl AuthProvider for AzureAuthProvider {
             .map_err(|e| anyhow::anyhow!("Failed to get authentication token: {}", e))?;
 
         match self.auth.credential_type() {
-            super::azureauth::AzureCredentials::ApiKey(_) => {
+            crate::azureauth::AzureCredentials::ApiKey(_) => {
                 Ok(("api-key".to_string(), auth_token.token_value))
             }
-            super::azureauth::AzureCredentials::BearerToken(_)
-            | super::azureauth::AzureCredentials::DefaultCredential => Ok((
+            crate::azureauth::AzureCredentials::BearerToken(_)
+            | crate::azureauth::AzureCredentials::DefaultCredential => Ok((
                 "Authorization".to_string(),
                 format!("Bearer {}", auth_token.token_value),
             )),
@@ -49,7 +48,7 @@ impl AuthProvider for AzureAuthProvider {
     }
 }
 
-impl goose_providers::base::ProviderDescriptor for AzureProvider {
+impl crate::base::ProviderDescriptor for AzureProvider {
     fn metadata() -> ProviderMetadata {
         ProviderMetadata::new(
             AZURE_PROVIDER_NAME,
@@ -69,60 +68,39 @@ impl goose_providers::base::ProviderDescriptor for AzureProvider {
     }
 }
 
-impl ProviderDef for AzureProvider {
-    type Provider = OpenAiCompatibleProvider;
+pub fn from_env(
+    endpoint: String,
+    deployment_name: String,
+    api_version: Option<String>,
+    api_key: Option<String>,
+    ad_token: Option<String>,
+    tls_config: Option<TlsConfig>,
+    request_builder: Option<RequestBuilderDecorator>,
+) -> Result<OpenAiCompatibleProvider> {
+    let auth = AzureAuth::new(api_key, ad_token).map_err(|e| match e {
+        AuthError::Credentials(msg) => anyhow::anyhow!("Credentials error: {}", msg),
+        AuthError::TokenExchange(msg) => anyhow::anyhow!("Token exchange error: {}", msg),
+    })?;
 
-    fn from_env(
-        _extensions: Vec<crate::config::ExtensionConfig>,
-        tls_config: Option<crate::providers::api_client::TlsConfig>,
-    ) -> BoxFuture<'static, Result<Self::Provider>> {
-        Box::pin(async move {
-            let config = crate::config::Config::global();
-            let endpoint: String = config.get_param("AZURE_OPENAI_ENDPOINT")?;
-            let deployment_name: String = config.get_param("AZURE_OPENAI_DEPLOYMENT_NAME")?;
-            let api_version: Option<String> = config
-                .get_param("AZURE_OPENAI_API_VERSION")
-                .ok()
-                .or_else(|| {
-                    if is_v1_endpoint(&endpoint) {
-                        None
-                    } else {
-                        Some(AZURE_DEFAULT_API_VERSION.to_string())
-                    }
-                });
-
-            let api_key = config
-                .get_secret("AZURE_OPENAI_API_KEY")
-                .ok()
-                .filter(|key: &String| !key.is_empty());
-            let ad_token = config
-                .get_secret("AZURE_OPENAI_AD_TOKEN")
-                .ok()
-                .filter(|token: &String| !token.is_empty());
-            let auth = AzureAuth::new(api_key, ad_token).map_err(|e| match e {
-                AuthError::Credentials(msg) => anyhow::anyhow!("Credentials error: {}", msg),
-                AuthError::TokenExchange(msg) => anyhow::anyhow!("Token exchange error: {}", msg),
-            })?;
-
-            let auth_provider = AzureAuthProvider { auth };
-            let host = format!("{}/openai", endpoint.trim_end_matches('/'));
-            let mut api_client = ApiClient::new_with_tls(
-                host,
-                AuthMethod::Custom(Box::new(auth_provider)),
-                tls_config,
-            )?
-            .with_request_builder(crate::session_context::session_id_request_builder());
-            if let Some(version) = api_version {
-                api_client = api_client.with_query(vec![("api-version".to_string(), version)]);
-            }
-
-            Ok(OpenAiCompatibleProvider::new(
-                AZURE_PROVIDER_NAME.to_string(),
-                api_client,
-                format!("deployments/{}/", deployment_name),
-            ))
-        })
+    let auth_provider = AzureAuthProvider { auth };
+    let host = format!("{}/openai", endpoint.trim_end_matches('/'));
+    let mut api_client = ApiClient::new_with_tls(
+        host,
+        AuthMethod::Custom(Box::new(auth_provider)),
+        tls_config,
+    )?;
+    if let Some(request_builder) = request_builder {
+        api_client = api_client.with_request_builder(request_builder);
     }
+    if let Some(version) = api_version {
+        api_client = api_client.with_query(vec![("api-version".to_string(), version)]);
+    }
+
+    Ok(OpenAiCompatibleProvider::new(
+        AZURE_PROVIDER_NAME.to_string(),
+        api_client,
+        format!("deployments/{}/", deployment_name),
+    ))
 }
 
 #[cfg(test)]

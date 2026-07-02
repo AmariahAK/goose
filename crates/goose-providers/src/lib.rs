@@ -1,5 +1,7 @@
 pub mod anthropic;
 pub mod api_client;
+pub mod azure;
+pub mod azureauth;
 pub mod databricks;
 pub mod databricks_auth;
 pub mod databricks_v2;
@@ -16,3 +18,5 @@ pub mod openai;
 pub mod openai_compatible;
 
 pub use declarative::declarative_providers::*;
+
+mod subprocess_ext;
