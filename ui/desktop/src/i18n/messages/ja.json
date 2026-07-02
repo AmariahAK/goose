@@ -1163,6 +1163,9 @@
   "extensionTimeoutField.timeoutLabel": {
     "defaultMessage": "タイムアウト"
   },
+  "externalBackendSection.allowedOriginHelp": {
+    "defaultMessage": "Packaged Goose Desktop connects from origin {origin}. Start external goose serve with --allowed-origin {origin}."
+  },
   "externalBackendSection.certFingerprint": {
     "defaultMessage": "証明書フィンガープリント（任意）"
   },

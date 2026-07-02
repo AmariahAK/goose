@@ -6,6 +6,7 @@ import { AlertCircle } from 'lucide-react';
 import { ExternalGoosedConfig, defaultSettings } from '../../../utils/settings';
 import { defineMessages, useIntl } from '../../../i18n';
 import { normalizeAcpHttpBaseUrl } from '../../../acp/url';
+import { PACKAGED_RENDERER_ORIGIN } from '../../../appProtocol';
 
 const i18n = defineMessages({
   title: {
@@ -34,6 +35,11 @@ const i18n = defineMessages({
     defaultMessage:
       'Enter the HTTP(S) base URL. Goose checks /status and connects to /acp under this base.',
   },
+  allowedOriginHelp: {
+    id: 'externalBackendSection.allowedOriginHelp',
+    defaultMessage:
+      'Packaged Goose Desktop connects from origin {origin}. Start external goose serve with --allowed-origin {origin}.',
+  },
   secretKey: {
     id: 'externalBackendSection.secretKey',
     defaultMessage: 'Secret Key',
@@ -56,12 +62,12 @@ const i18n = defineMessages({
   },
   certFingerprintHelp: {
     id: 'externalBackendSection.certFingerprintHelp',
-    defaultMessage: 'Pin a specific TLS certificate fingerprint. If omitted, the certificate is trusted on first use (TOFU).',
+    defaultMessage:
+      'Pin a specific TLS certificate fingerprint. If omitted, the certificate is trusted on first use (TOFU).',
   },
   restartNote: {
     id: 'externalBackendSection.restartNote',
-    defaultMessage:
-      'Changes apply to new chat windows. Restart Goose to update existing windows.',
+    defaultMessage: 'Changes apply to new chat windows. Restart Goose to update existing windows.',
   },
   urlProtocolError: {
     id: 'externalBackendSection.urlProtocolError',
@@ -77,7 +83,8 @@ const i18n = defineMessages({
   },
   urlBaseError: {
     id: 'externalBackendSection.urlBaseError',
-    defaultMessage: 'URL must be the backend base URL before /acp, without query parameters or fragments',
+    defaultMessage:
+      'URL must be the backend base URL before /acp, without query parameters or fragments',
   },
 });
 
@@ -95,10 +102,7 @@ export default function ExternalBackendSection() {
     loadSettings();
   }, []);
 
-  const validateUrl = (
-    value: string,
-    certFingerprint = config.certFingerprint
-  ): boolean => {
+  const validateUrl = (value: string, certFingerprint = config.certFingerprint): boolean => {
     if (!value) {
       setUrlError(null);
       return true;
@@ -175,14 +179,14 @@ export default function ExternalBackendSection() {
       <Card className="pb-2">
         <CardHeader className="pb-0">
           <CardTitle>{intl.formatMessage(i18n.title)}</CardTitle>
-          <CardDescription>
-            {intl.formatMessage(i18n.description)}
-          </CardDescription>
+          <CardDescription>{intl.formatMessage(i18n.description)}</CardDescription>
         </CardHeader>
         <CardContent className="pt-4 space-y-4 px-4">
           <div className="flex items-center justify-between">
             <div>
-              <h3 className="text-text-primary text-xs">{intl.formatMessage(i18n.useExternalServer)}</h3>
+              <h3 className="text-text-primary text-xs">
+                {intl.formatMessage(i18n.useExternalServer)}
+              </h3>
               <p className="text-xs text-text-secondary max-w-md mt-[2px]">
                 {intl.formatMessage(i18n.useExternalServerDescription)}
               </p>
@@ -221,6 +225,11 @@ export default function ExternalBackendSection() {
                 )}
                 <p className="text-xs text-text-secondary">
                   {intl.formatMessage(i18n.serverUrlHelp)}
+                </p>
+                <p className="text-xs text-text-secondary">
+                  {intl.formatMessage(i18n.allowedOriginHelp, {
+                    origin: PACKAGED_RENDERER_ORIGIN,
+                  })}
                 </p>
               </div>
 

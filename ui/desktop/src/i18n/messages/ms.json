@@ -1163,6 +1163,9 @@
   "extensionsView.searchPlaceholder": {
     "defaultMessage": "Cari sambungan..."
   },
+  "externalBackendSection.allowedOriginHelp": {
+    "defaultMessage": "Packaged Goose Desktop connects from origin {origin}. Start external goose serve with --allowed-origin {origin}."
+  },
   "externalBackendSection.certFingerprint": {
     "defaultMessage": "Cap Jari Sijil (pilihan)"
   },

@@ -1163,6 +1163,9 @@
   "extensionsView.searchPlaceholder": {
     "defaultMessage": "Cari ekstensi..."
   },
+  "externalBackendSection.allowedOriginHelp": {
+    "defaultMessage": "Packaged Goose Desktop connects from origin {origin}. Start external goose serve with --allowed-origin {origin}."
+  },
   "externalBackendSection.certFingerprint": {
     "defaultMessage": "Sidik Jari Sertifikat (opsional)"
   },

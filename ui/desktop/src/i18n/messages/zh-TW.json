@@ -1163,6 +1163,9 @@
   "extensionsView.searchPlaceholder": {
     "defaultMessage": "搜尋擴充功能…"
   },
+  "externalBackendSection.allowedOriginHelp": {
+    "defaultMessage": "Packaged Goose Desktop connects from origin {origin}. Start external goose serve with --allowed-origin {origin}."
+  },
   "externalBackendSection.certFingerprint": {
     "defaultMessage": "憑證指紋（選填）"
   },

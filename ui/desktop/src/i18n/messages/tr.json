@@ -1163,6 +1163,9 @@
   "extensionTimeoutField.timeoutLabel": {
     "defaultMessage": "Zaman aşımı"
   },
+  "externalBackendSection.allowedOriginHelp": {
+    "defaultMessage": "Packaged Goose Desktop connects from origin {origin}. Start external goose serve with --allowed-origin {origin}."
+  },
   "externalBackendSection.certFingerprint": {
     "defaultMessage": "Sertifika Parmak İzi (isteğe bağlı)"
   },
