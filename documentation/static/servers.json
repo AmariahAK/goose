@@ -119,6 +119,11 @@
         "name": "BROWSERBASE_API_KEY",
         "description": "Required environment variable",
         "required": true
+      },
+      {
+        "name": "GEMINI_API_KEY",
+        "description": "Required environment variable",
+        "required": true
       }
     ]
   },
