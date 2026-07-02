@@ -32,6 +32,7 @@ export interface StartGooseServeOptions extends FindGooseBinaryOptions {
   dir?: string;
   serverSecret: string;
   tls?: boolean;
+  allowedOrigins?: string[];
   env?: Record<string, string | undefined>;
   logger?: Logger;
   diagnosticsDir?: string;
@@ -135,10 +136,7 @@ const appendErrorTail = (target: string[], lines: string[], maxLines = 100): voi
 const CERT_FINGERPRINT_PREFIX = 'GOOSED_CERT_FINGERPRINT=';
 const TLS_FINGERPRINT_TIMEOUT_MS = 5000;
 
-const fetchStatus = async (
-  statusUrl: string,
-  readinessFetch: ReadinessFetch
-): Promise<boolean> => {
+const fetchStatus = async (statusUrl: string, readinessFetch: ReadinessFetch): Promise<boolean> => {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 1000);
 
@@ -321,6 +319,7 @@ export const startGooseServe = async ({
   dir,
   serverSecret,
   tls = false,
+  allowedOrigins = [],
   env: additionalEnv = {},
   isPackaged,
   resourcesPath,
@@ -358,6 +357,7 @@ export const startGooseServe = async ({
   const args = [
     'serve',
     ...(tls ? ['--tls'] : []),
+    ...allowedOrigins.flatMap((origin) => ['--allowed-origin', origin]),
     '--platform',
     'desktop',
     '--host',

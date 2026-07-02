@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { PACKAGED_RENDERER_ORIGIN } from './appProtocol';
 import { buildLocalServeUrls, findGooseBinaryPath, startGooseServe } from './gooseServe';
 
 const binaryName = process.platform === 'win32' ? 'goose.exe' : 'goose';
@@ -202,80 +203,124 @@ describe('startGooseServe', () => {
     }
   });
 
-  it.skipIf(process.platform === 'win32')('uses TLS URLs and args when TLS is enabled', async () => {
+  it.skipIf(process.platform === 'win32')(
+    'uses TLS URLs and args when TLS is enabled',
+    async () => {
+      const tempDir = makeTempDir();
+      const argsPath = path.join(tempDir, 'args.txt');
+      const goosePath = makeExecutable(
+        path.join(tempDir, 'goose'),
+        [
+          '#!/usr/bin/env sh',
+          'printf "%s\\n" "$@" > "$TEST_ARGS_PATH"',
+          'printf "GOOSED_CERT_FINGERPRINT=DD:EE:FF\\n"',
+          'while true; do sleep 1; done',
+          '',
+        ].join('\n')
+      );
+      vi.stubEnv('GOOSE_BINARY', goosePath);
+
+      const readinessUrls: string[] = [];
+      const logger = {
+        info: vi.fn(),
+        error: vi.fn(),
+      };
+      const readinessFetch = vi.fn(async (input: string, _init?: ReadinessFetchInit) => {
+        readinessUrls.push(input);
+        return new Response(null, { status: 200 });
+      });
+
+      const result = await startGooseServe({
+        serverSecret: 'test-secret',
+        dir: tempDir,
+        tls: true,
+        env: {
+          TEST_ARGS_PATH: argsPath,
+        },
+        logger,
+        readinessFetch,
+      });
+
+      try {
+        expect(readinessUrls[0]).toMatch(/^https:\/\/127\.0\.0\.1:\d+\/status$/);
+        expect(result.acpUrl).toMatch(/^wss:\/\/127\.0\.0\.1:\d+\/acp\?token=test-secret$/);
+        expect(result.certFingerprint).toBe('DD:EE:FF');
+        const args = await waitForFileLines(argsPath);
+        expect(args).toContain('--tls');
+        expect(args).not.toContain('--allowed-origin');
+      } finally {
+        await result.cleanup();
+      }
+    }
+  );
+
+  it.skipIf(process.platform === 'win32')('passes allowed origins to goose serve', async () => {
     const tempDir = makeTempDir();
+    const resourcesPath = path.join(tempDir, 'resources');
     const argsPath = path.join(tempDir, 'args.txt');
-    const goosePath = makeExecutable(
-      path.join(tempDir, 'goose'),
+    makeExecutable(
+      path.join(resourcesPath, 'bin', binaryName),
       [
         '#!/usr/bin/env sh',
         'printf "%s\\n" "$@" > "$TEST_ARGS_PATH"',
-        'printf "GOOSED_CERT_FINGERPRINT=DD:EE:FF\\n"',
         'while true; do sleep 1; done',
         '',
       ].join('\n')
     );
-    vi.stubEnv('GOOSE_BINARY', goosePath);
-
-    const readinessUrls: string[] = [];
-    const logger = {
-      info: vi.fn(),
-      error: vi.fn(),
-    };
-    const readinessFetch = vi.fn(async (input: string, _init?: ReadinessFetchInit) => {
-      readinessUrls.push(input);
-      return new Response(null, { status: 200 });
-    });
-
-    const result = await startGooseServe({
-      serverSecret: 'test-secret',
-      dir: tempDir,
-      tls: true,
-      env: {
-        TEST_ARGS_PATH: argsPath,
-      },
-      logger,
-      readinessFetch,
-    });
-
-    try {
-      expect(readinessUrls[0]).toMatch(/^https:\/\/127\.0\.0\.1:\d+\/status$/);
-      expect(result.acpUrl).toMatch(/^wss:\/\/127\.0\.0\.1:\d+\/acp\?token=test-secret$/);
-      expect(result.certFingerprint).toBe('DD:EE:FF');
-      await expect(waitForFileLines(argsPath)).resolves.toContain('--tls');
-    } finally {
-      await result.cleanup();
-    }
-  });
-
-  it.skipIf(process.platform === 'win32')('waits for TLS fingerprint after readiness succeeds', async () => {
-    const tempDir = makeTempDir();
-    const goosePath = makeExecutable(
-      path.join(tempDir, 'goose'),
-      [
-        '#!/usr/bin/env sh',
-        'sleep 0.1',
-        'printf "GOOSED_CERT_FINGERPRINT=11:22:33\\n"',
-        'while true; do sleep 1; done',
-        '',
-      ].join('\n')
-    );
-    vi.stubEnv('GOOSE_BINARY', goosePath);
 
     const readinessFetch = vi.fn(async () => new Response(null, { status: 200 }));
 
     const result = await startGooseServe({
       serverSecret: 'test-secret',
       dir: tempDir,
-      tls: true,
+      isPackaged: true,
+      resourcesPath,
+      allowedOrigins: [PACKAGED_RENDERER_ORIGIN],
+      env: {
+        TEST_ARGS_PATH: argsPath,
+      },
       readinessFetch,
     });
 
     try {
-      expect(readinessFetch).toHaveBeenCalled();
-      expect(result.certFingerprint).toBe('11:22:33');
+      const args = await waitForFileLines(argsPath);
+      expect(args).toEqual(expect.arrayContaining(['--allowed-origin', PACKAGED_RENDERER_ORIGIN]));
     } finally {
       await result.cleanup();
     }
   });
+
+  it.skipIf(process.platform === 'win32')(
+    'waits for TLS fingerprint after readiness succeeds',
+    async () => {
+      const tempDir = makeTempDir();
+      const goosePath = makeExecutable(
+        path.join(tempDir, 'goose'),
+        [
+          '#!/usr/bin/env sh',
+          'sleep 0.1',
+          'printf "GOOSED_CERT_FINGERPRINT=11:22:33\\n"',
+          'while true; do sleep 1; done',
+          '',
+        ].join('\n')
+      );
+      vi.stubEnv('GOOSE_BINARY', goosePath);
+
+      const readinessFetch = vi.fn(async () => new Response(null, { status: 200 }));
+
+      const result = await startGooseServe({
+        serverSecret: 'test-secret',
+        dir: tempDir,
+        tls: true,
+        readinessFetch,
+      });
+
+      try {
+        expect(readinessFetch).toHaveBeenCalled();
+        expect(result.certFingerprint).toBe('11:22:33');
+      } finally {
+        await result.cleanup();
+      }
+    }
+  );
 });

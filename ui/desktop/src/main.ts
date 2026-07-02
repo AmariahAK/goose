@@ -11,12 +11,13 @@ import {
   net,
   Notification,
   powerSaveBlocker,
+  protocol,
   screen,
   session,
   shell,
   Tray,
 } from 'electron';
-import { pathToFileURL, format as formatUrl, URLSearchParams } from 'node:url';
+import { format as formatUrl, URLSearchParams } from 'node:url';
 import { Buffer } from 'node:buffer';
 import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
@@ -54,6 +55,25 @@ import type { GooseApp } from './types/apps';
 import installExtension, { REACT_DEVELOPER_TOOLS } from 'electron-devtools-installer';
 import { BLOCKED_PROTOCOLS, WEB_PROTOCOLS } from './utils/urlSecurity';
 import { buildCSP } from './utils/csp';
+import {
+  PACKAGED_RENDERER_ORIGIN,
+  PACKAGED_RENDERER_PROTOCOL,
+  packagedRendererUrl,
+  rendererContentType,
+  resolvePackagedRendererPath,
+} from './appProtocol';
+
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: PACKAGED_RENDERER_PROTOCOL,
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      corsEnabled: true,
+    },
+  },
+]);
 
 function shouldSetupUpdater(): boolean {
   // Setup updater if either the flag is enabled OR dev updates are enabled
@@ -817,10 +837,44 @@ async function handleFileOpen(filePath: string) {
 declare var MAIN_WINDOW_VITE_DEV_SERVER_URL: string;
 declare var MAIN_WINDOW_VITE_NAME: string;
 
+function getPackagedRendererRoot(): string {
+  return path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}`);
+}
+
+let packagedRendererProtocolRegistered = false;
+
+function registerPackagedRendererProtocol() {
+  if (MAIN_WINDOW_VITE_DEV_SERVER_URL || packagedRendererProtocolRegistered) {
+    return;
+  }
+
+  protocol.handle(PACKAGED_RENDERER_PROTOCOL, async (request) => {
+    const filePath = resolvePackagedRendererPath(request.url, getPackagedRendererRoot());
+    if (!filePath) {
+      return new Response('Not found', { status: 404 });
+    }
+
+    try {
+      const data = await fs.readFile(filePath);
+      return new Response(new Uint8Array(data), {
+        headers: {
+          'Content-Type': rendererContentType(filePath),
+        },
+      });
+    } catch {
+      return new Response('Not found', { status: 404 });
+    }
+  });
+  packagedRendererProtocolRegistered = true;
+}
+
 function getAppUrl(): URL {
-  return MAIN_WINDOW_VITE_DEV_SERVER_URL
-    ? new URL(MAIN_WINDOW_VITE_DEV_SERVER_URL)
-    : pathToFileURL(path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`));
+  if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
+    return new URL(MAIN_WINDOW_VITE_DEV_SERVER_URL);
+  }
+
+  registerPackagedRendererProtocol();
+  return packagedRendererUrl();
 }
 
 // Parse command line arguments
@@ -1147,6 +1201,7 @@ const createChat = async (
         serverSecret,
         dir: workingDir,
         tls: true,
+        allowedOrigins: app.isPackaged ? [PACKAGED_RENDERER_ORIGIN] : undefined,
         env: {
           GOOSE_PATH_ROOT: appConfig.GOOSE_PATH_ROOT as string | undefined,
         },
@@ -2409,6 +2464,7 @@ const registerGlobalShortcuts = () => {
 
 async function appMain() {
   await configureProxy();
+  registerPackagedRendererProtocol();
 
   // Ensure Windows shims are available before any MCP processes are spawned
   await ensureWinShims();
@@ -2450,11 +2506,6 @@ async function appMain() {
 
   // Register global shortcuts based on settings
   registerGlobalShortcuts();
-
-  session.defaultSession.webRequest.onBeforeSendHeaders((details, callback) => {
-    details.requestHeaders['Origin'] = 'http://localhost:5173';
-    callback({ cancel: false, requestHeaders: details.requestHeaders });
-  });
 
   if (settings.showMenuBarIcon) {
     createTray();
