@@ -4,12 +4,10 @@ use anyhow::Result;
 use axum::middleware;
 use axum_server::Handle;
 use goose::acp::server_factory::{AcpServer, AcpServerFactoryConfig};
-use goose::acp::transport::create_acp_router;
+use goose::acp::transport::create_authenticated_acp_router;
 use goose::agents::GoosePlatform;
 use goose::config::paths::Paths;
-use goose_server::auth::{check_acp_token, check_token};
-#[cfg(any(feature = "rustls-tls", feature = "native-tls"))]
-use goose_server::tls::setup_tls;
+use goose_server::auth::check_token;
 use std::sync::Arc;
 use tower_http::cors::{Any, CorsLayer};
 use tracing::info;
@@ -37,8 +35,8 @@ async fn shutdown_signal() {
 }
 
 pub async fn run() -> Result<()> {
-    // Install the rustls crypto provider early, before any spawned tasks (tunnel,
-    // gateways, etc.) try to open TLS connections. Both `ring` and `aws-lc-rs`
+    // Install the rustls crypto provider early, before any spawned tasks (tunnel, etc.)
+    // try to open TLS connections. Both `ring` and `aws-lc-rs`
     // features are enabled on rustls (via different transitive deps), so rustls
     // cannot auto-detect a provider — we must pick one explicitly.
     #[cfg(feature = "rustls-tls")]
@@ -74,28 +72,23 @@ pub async fn run() -> Result<()> {
         scheduler: Some(app_state.scheduler()),
     }));
 
-    let rest_router = crate::routes::configure(app_state.clone(), secret_key.clone()).layer(
-        middleware::from_fn_with_state(secret_key.clone(), check_token),
-    );
-    let acp_router = create_acp_router(acp_server).layer(middleware::from_fn_with_state(
-        secret_key.clone(),
-        check_acp_token,
-    ));
+    let rest_router = crate::routes::configure(app_state.clone(), secret_key.clone())
+        .layer(middleware::from_fn_with_state(
+            secret_key.clone(),
+            check_token,
+        ))
+        .layer(cors);
+    let acp_router = create_authenticated_acp_router(acp_server, secret_key.clone());
 
-    let app = rest_router.merge(acp_router).layer(cors);
+    let app = rest_router.merge(acp_router);
 
     let addr = settings.socket_addr();
-
-    let gateway_manager = app_state.gateway_manager.clone();
-    tokio::spawn(async move {
-        gateway_manager.check_auto_start().await;
-    });
 
     if settings.tls {
         #[cfg(any(feature = "rustls-tls", feature = "native-tls"))]
         {
             boot_marker("tls setup start");
-            let tls_setup = setup_tls(
+            let tls_setup = goose::acp::transport::tls::setup_tls(
                 settings.tls_cert_path.as_deref(),
                 settings.tls_key_path.as_deref(),
             )

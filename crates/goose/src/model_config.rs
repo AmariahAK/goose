@@ -5,6 +5,7 @@ use anyhow::{anyhow, Result};
 use goose_providers::conversation::token_usage::ProviderUsage;
 use goose_providers::errors::ProviderError;
 use goose_providers::model::ModelConfig;
+use goose_providers::thinking::ThinkingEffort;
 use rmcp::model::Tool;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -26,7 +27,7 @@ pub fn model_config_from_user_config_with_session_settings(
 ) -> Result<ModelConfig> {
     let config = Config::global();
     let model = base_model_config_from_user_config(model_name.as_ref())?;
-    let model = materialize_model_config_inner(model, false)?
+    let model = materialize_model_config_inner(model, provider_name, false)?
         .with_context_limit(context_limit)
         .with_inherited_session_settings_from(previous, request_params)
         .with_default_thinking_effort(config.get_goose_thinking_effort());
@@ -35,12 +36,13 @@ pub fn model_config_from_user_config_with_session_settings(
 }
 
 pub fn materialize_model_config(provider_name: &str, model: ModelConfig) -> Result<ModelConfig> {
-    let model = materialize_model_config_inner(model, true)?;
+    let model = materialize_model_config_inner(model, provider_name, true)?;
     Ok(model.with_canonical_limits(provider_name))
 }
 
 fn materialize_model_config_inner(
     mut model: ModelConfig,
+    provider_name: &str,
     include_default_thinking_effort: bool,
 ) -> Result<ModelConfig> {
     let config = Config::global();
@@ -59,6 +61,10 @@ fn materialize_model_config_inner(
 
     if include_default_thinking_effort {
         model = model.with_default_thinking_effort(config.get_goose_thinking_effort());
+    }
+
+    if provider_name == goose_providers::openai::OPEN_AI_PROVIDER_NAME {
+        model = apply_openai_request_params(model);
     }
 
     Ok(model)
@@ -110,11 +116,14 @@ pub async fn complete_fast(
 ) -> Result<(Message, ProviderUsage), ProviderError> {
     let fast_model_config = get_fast_model(provider.get_name(), model_config)
         .await
-        .map_err(|e| ProviderError::ExecutionError(e.to_string()))?;
+        .map_err(|e| ProviderError::ExecutionError(e.to_string()))?
+        .with_thinking_effort(ThinkingEffort::Off);
 
-    match provider
-        .complete(&fast_model_config, session_id, system, messages, tools)
-        .await
+    match crate::session_context::with_session_id(
+        Some(session_id.to_string()),
+        provider.complete(&fast_model_config, system, messages, tools),
+    )
+    .await
     {
         Ok(response) => Ok(response),
         Err(e) if fast_model_config.model_name != model_config.model_name => {
@@ -124,9 +133,14 @@ pub async fn complete_fast(
                 e,
                 model_config.model_name
             );
-            provider
-                .complete(model_config, session_id, system, messages, tools)
-                .await
+            let fallback_config = model_config
+                .clone()
+                .with_thinking_effort(ThinkingEffort::Off);
+            crate::session_context::with_session_id(
+                Some(session_id.to_string()),
+                provider.complete(&fallback_config, system, messages, tools),
+            )
+            .await
         }
         Err(e) => Err(e),
     }
@@ -141,6 +155,17 @@ async fn provider_default_fast_model(provider_name: &str) -> Option<String> {
         .await
         .ok()
         .and_then(|entry| entry.metadata().fast_model.clone())
+}
+
+fn apply_openai_request_params(mut model: ModelConfig) -> ModelConfig {
+    let config = Config::global();
+    if let Some(store) = config.get_openai_store() {
+        model = model.with_merged_request_params(HashMap::from([(
+            "store".to_string(),
+            serde_json::json!(store),
+        )]));
+    }
+    model
 }
 
 fn base_model_config_from_user_config(model_name: &str) -> Result<ModelConfig> {

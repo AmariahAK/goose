@@ -1,6 +1,9 @@
 mod acp_tooling;
 pub mod amp_acp;
-pub mod anthropic;
+pub mod anthropic {
+    pub use goose_providers::anthropic::*;
+}
+pub mod anthropic_def;
 pub mod api_client {
     pub use goose_providers::api_client::*;
 }
@@ -25,9 +28,9 @@ pub mod codex;
 pub mod codex_acp;
 pub mod copilot_acp;
 pub mod cursor_agent;
-pub mod databricks;
-pub mod databricks_auth;
-pub mod databricks_v2;
+pub mod custom_provider_config;
+pub mod databricks_def;
+pub mod databricks_v2_def;
 pub mod formats;
 mod gcpauth;
 pub mod gcpvertexai;
@@ -49,7 +52,10 @@ pub mod local_inference;
 pub mod nanogpt;
 pub mod oauth;
 pub mod oauth_device_flow;
-pub mod ollama;
+pub mod ollama {
+    pub use goose_providers::ollama::*;
+}
+pub mod ollama_def;
 pub mod openai {
     pub use goose_providers::openai::*;
 }
@@ -59,6 +65,7 @@ pub mod openai_compatible {
 pub mod openrouter;
 pub mod pi_acp;
 pub mod provider_registry;
+pub mod provider_secrets;
 pub mod provider_test;
 mod retry {
     pub use goose_providers::retry::*;
@@ -66,7 +73,10 @@ mod retry {
 pub mod openai_def;
 #[cfg(feature = "aws-providers")]
 pub mod sagemaker_tgi;
-pub mod snowflake;
+pub mod snowflake {
+    pub use goose_providers::snowflake::*;
+}
+pub mod snowflake_def;
 pub mod testprovider;
 pub mod tetrate;
 pub mod toolshim;
