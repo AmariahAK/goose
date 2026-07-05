@@ -21,7 +21,6 @@ pub fn is_v1_endpoint(endpoint: &str) -> bool {
 
 pub struct AzureProvider;
 
-// Custom auth provider that wraps AzureAuth
 struct AzureAuthProvider {
     auth: AzureAuth,
 }

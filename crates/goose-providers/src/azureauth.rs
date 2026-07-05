@@ -5,46 +5,34 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 
-/// Represents errors that can occur during Azure authentication.
 #[derive(Debug, thiserror::Error)]
 pub enum AuthError {
-    /// Error when loading credentials from the filesystem or environment
     #[error("Failed to load credentials: {0}")]
     Credentials(String),
 
-    /// Error during token exchange
     #[error("Token exchange failed: {0}")]
     TokenExchange(String),
 }
 
-/// Represents an authentication token with its type and value.
 #[derive(Debug, Clone)]
 pub struct AuthToken {
-    /// The type of the token (e.g., "Bearer")
     pub token_type: String,
-    /// The actual token value
     pub token_value: String,
 }
 
-/// Represents the types of Azure credentials supported.
 #[derive(Debug, Clone)]
 pub enum AzureCredentials {
-    /// API key based authentication
     ApiKey(String),
-    /// Pre-acquired Microsoft Entra ID access token (e.g. AZURE_OPENAI_AD_TOKEN)
     BearerToken(String),
-    /// Azure credential chain based authentication
     DefaultCredential,
 }
 
-/// Holds a cached token and its expiration time.
 #[derive(Debug, Clone)]
 struct CachedToken {
     token: AuthToken,
     expires_at: Instant,
 }
 
-/// Response from Azure token endpoint
 #[derive(Debug, Clone, Deserialize)]
 struct TokenResponse {
     #[serde(rename = "accessToken")]
@@ -55,7 +43,6 @@ struct TokenResponse {
     expires_on: u64,
 }
 
-/// Azure authentication handler that manages credentials and token caching.
 #[derive(Debug)]
 pub struct AzureAuth {
     credentials: AzureCredentials,
@@ -63,15 +50,6 @@ pub struct AzureAuth {
 }
 
 impl AzureAuth {
-    /// Creates a new Azure authentication handler.
-    ///
-    /// Initializes the authentication handler by:
-    /// 1. Loading credentials from environment
-    /// 2. Setting up an HTTP client for token requests
-    /// 3. Initializing the token cache
-    ///
-    /// # Returns
-    /// * `Result<Self, AuthError>` - A new AzureAuth instance or an error if initialization fails
     pub fn new(api_key: Option<String>, ad_token: Option<String>) -> Result<Self, AuthError> {
         let credentials = match (ad_token, api_key) {
             (Some(token), _) => AzureCredentials::BearerToken(token),
@@ -85,24 +63,10 @@ impl AzureAuth {
         })
     }
 
-    /// Returns the type of credentials being used.
     pub fn credential_type(&self) -> &AzureCredentials {
         &self.credentials
     }
 
-    /// Retrieves a valid authentication token.
-    ///
-    /// This method implements an efficient token management strategy:
-    /// 1. For API key auth, returns the API key directly
-    /// 2. For bearer token auth, returns the pre-acquired token directly
-    /// 3. For Azure credential chain:
-    ///    a. Checks the cache for a valid token
-    ///    b. Returns the cached token if not expired
-    ///    c. Obtains a new token if needed or expired
-    ///    d. Uses double-checked locking for thread safety
-    ///
-    /// # Returns
-    /// * `Result<AuthToken, AuthError>` - A valid authentication token or an error
     pub async fn get_token(&self) -> Result<AuthToken, AuthError> {
         match &self.credentials {
             AzureCredentials::ApiKey(key) => Ok(AuthToken {
@@ -118,17 +82,14 @@ impl AzureAuth {
     }
 
     async fn get_default_credential_token(&self) -> Result<AuthToken, AuthError> {
-        // Try read lock first for better concurrency
         if let Some(cached) = self.cached_token.read().await.as_ref() {
             if cached.expires_at > Instant::now() {
                 return Ok(cached.token.clone());
             }
         }
 
-        // Take write lock only if needed
         let mut token_guard = self.cached_token.write().await;
 
-        // Double-check expiration after acquiring write lock
         if let Some(cached) = token_guard.as_ref() {
             if cached.expires_at > Instant::now() {
                 return Ok(cached.token.clone());
