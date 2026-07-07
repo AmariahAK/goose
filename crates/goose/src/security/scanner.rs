@@ -295,7 +295,12 @@ impl PromptInjectionScanner {
             ClassifierType::Prompt => "prompt injection",
         };
 
-        match classifier.classify(text).await {
+        let result = match classifier_type {
+            ClassifierType::Command => classifier.classify_chunked(text).await,
+            ClassifierType::Prompt => classifier.classify(text).await,
+        };
+
+        match result {
             Ok(conf) => Some(conf),
             Err(e) => {
                 tracing::warn!("{} classifier scan failed: {:#}", type_name, e);

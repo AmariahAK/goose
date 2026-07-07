@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use futures::stream::{self, StreamExt};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::Duration;
@@ -217,6 +218,58 @@ impl ClassificationClient {
         };
 
         Ok(injection_score)
+    }
+
+    pub async fn classify_chunked(&self, text: &str) -> Result<f32> {
+        use crate::security::command_chunker::chunk_command;
+
+        let chunks = chunk_command(text);
+
+        if chunks.len() == 1 {
+            return self.classify(text).await;
+        }
+
+        tracing::debug!(
+            "Command classifier: split {} chars into {} overlapping window(s)",
+            text.len(),
+            chunks.len()
+        );
+
+        let results: Vec<Result<f32>> = stream::iter(chunks)
+            .map(|chunk| async move { self.classify(&chunk).await })
+            .buffer_unordered(3)
+            .collect()
+            .await;
+
+        let successes: Vec<f32> = results
+            .iter()
+            .filter_map(|r| r.as_ref().ok())
+            .copied()
+            .collect();
+        let failure_count = results.len() - successes.len();
+
+        if successes.is_empty() {
+            let first_error = results
+                .into_iter()
+                .find_map(|r| r.err())
+                .unwrap_or_else(|| anyhow::anyhow!("All command chunk classifications failed"));
+            return Err(first_error);
+        }
+
+        if failure_count > 0 {
+            tracing::warn!(
+                "Partial command chunk classification failure: {}/{} windows failed",
+                failure_count,
+                results.len()
+            );
+        }
+
+        let max_confidence = successes.into_iter().fold(0.0_f32, f32::max);
+        tracing::debug!(
+            "Command classifier chunked result: max_confidence={:.3}",
+            max_confidence
+        );
+        Ok(max_confidence)
     }
 
     fn apply_softmax(&self, labels: &[ClassificationLabel]) -> Result<Vec<ClassificationLabel>> {
