@@ -548,5 +548,3 @@ export const MessageQueue: React.FC<MessageQueueProps> = ({
     </div>
   );
 };
-
-export default MessageQueue;

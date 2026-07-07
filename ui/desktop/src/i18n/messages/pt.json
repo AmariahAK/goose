@@ -3008,12 +3008,6 @@
   "recipeModelSelector.useDefaultProvider": {
     "defaultMessage": "Usar fornecedor predefinido"
   },
-  "recipeNameField.defaultLabel": {
-    "defaultMessage": "Nome da receita"
-  },
-  "recipeNameField.formatHint": {
-    "defaultMessage": "Será formatado automaticamente (minúsculas, traços nos espaços)"
-  },
   "recipeWarningModal.cancel": {
     "defaultMessage": "Cancelar"
   },
@@ -3707,24 +3701,6 @@
   "sessionIndicators.streaming": {
     "defaultMessage": "Em transmissão"
   },
-  "sessionViewComponents.empty.description": {
-    "defaultMessage": "Esta sessão não contém mensagens"
-  },
-  "sessionViewComponents.empty.title": {
-    "defaultMessage": "Nenhuma mensagem encontrada"
-  },
-  "sessionViewComponents.error.loading": {
-    "defaultMessage": "Erro ao carregar os detalhes da sessão"
-  },
-  "sessionViewComponents.error.tryAgain": {
-    "defaultMessage": "Tentar novamente"
-  },
-  "sessionViewComponents.role.assistant": {
-    "defaultMessage": "Goose"
-  },
-  "sessionViewComponents.role.user": {
-    "defaultMessage": "Você"
-  },
   "sessions.action.delete": {
     "defaultMessage": "Eliminar sessão"
   },
@@ -4052,9 +4028,6 @@
   "settingsView.title": {
     "defaultMessage": "Definições"
   },
-  "sheet.close": {
-    "defaultMessage": "Fechar"
-  },
   "shortcutRecorder.cancel": {
     "defaultMessage": "Cancelar"
   },
@@ -4120,15 +4093,6 @@
   },
   "stringUtils.configuredProvider": {
     "defaultMessage": "O fornecedor {name} está configurado"
-  },
-  "stringUtils.ollamaApp": {
-    "defaultMessage": "Aplicação Ollama"
-  },
-  "stringUtils.ollamaNotConfiguredPrefix": {
-    "defaultMessage": "Para utilizar, ou a"
-  },
-  "stringUtils.ollamaNotConfiguredSuffix": {
-    "defaultMessage": "deve estar instalada e aberta na sua máquina, ou deve introduzir um valor para OLLAMA_HOST."
   },
   "subRecipeEditor.addExisting": {
     "defaultMessage": "Adicionar Existente"

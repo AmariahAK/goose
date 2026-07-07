@@ -14,12 +14,12 @@ export interface Logger {
   error: (...args: unknown[]) => void;
 }
 
-export const defaultLogger: Logger = {
+const defaultLogger: Logger = {
   info: (...args) => console.log('[goose-serve]', ...args),
   error: (...args) => console.error('[goose-serve]', ...args),
 };
 
-export interface FindGooseBinaryOptions {
+interface FindGooseBinaryOptions {
   isPackaged?: boolean;
   resourcesPath?: string;
 }
@@ -28,7 +28,7 @@ type ReadinessFetchInit = Parameters<typeof globalThis.fetch>[1];
 export type GooseServeExitSignal = ChildProcess['signalCode'];
 type ReadinessFetch = (input: string, init?: ReadinessFetchInit) => Promise<Response>;
 
-export interface StartGooseServeOptions extends FindGooseBinaryOptions {
+interface StartGooseServeOptions extends FindGooseBinaryOptions {
   dir?: string;
   serverSecret: string;
   tls?: boolean;
@@ -135,10 +135,7 @@ const appendErrorTail = (target: string[], lines: string[], maxLines = 100): voi
 const CERT_FINGERPRINT_PREFIX = 'GOOSED_CERT_FINGERPRINT=';
 const TLS_FINGERPRINT_TIMEOUT_MS = 5000;
 
-const fetchStatus = async (
-  statusUrl: string,
-  readinessFetch: ReadinessFetch
-): Promise<boolean> => {
+const fetchStatus = async (statusUrl: string, readinessFetch: ReadinessFetch): Promise<boolean> => {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 1000);
 
@@ -233,9 +230,9 @@ const waitForGooseServeReady = async (
   return false;
 };
 
-export type LocalServeScheme = 'http' | 'https';
+type LocalServeScheme = 'http' | 'https';
 
-export interface LocalServeUrls {
+interface LocalServeUrls {
   httpBaseUrl: string;
   statusUrl: string;
   healthUrl: string;

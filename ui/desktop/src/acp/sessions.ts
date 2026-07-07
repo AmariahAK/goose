@@ -42,19 +42,19 @@ export interface SessionListItem {
   hasRecipe?: boolean;
 }
 
-export interface SessionListPage {
+interface SessionListPage {
   sessions: SessionListItem[];
   nextCursor: string | null;
 }
 
-export interface LoadSessionMeta {
+interface LoadSessionMeta {
   recipe?: Recipe | null;
   userRecipeValues?: Record<string, string> | null;
   extensionResults?: ExtensionLoadResult[] | null;
   workingDir?: string;
 }
 
-export interface AcpLoadSessionResult {
+interface AcpLoadSessionResult {
   sessionInfo: SessionInfo;
   response: LoadSessionResponse;
   meta: LoadSessionMeta;
@@ -72,7 +72,7 @@ function parseSessionResponseMeta(rawMeta: unknown): LoadSessionMeta {
   };
 }
 
-export function parseLoadMeta(response: LoadSessionResponse): LoadSessionMeta {
+function parseLoadMeta(response: LoadSessionResponse): LoadSessionMeta {
   return parseSessionResponseMeta(response._meta);
 }
 
@@ -131,7 +131,7 @@ function sessionInfoToListItem(s: SessionInfo): SessionListItem {
   };
 }
 
-export interface SessionListFilter {
+interface SessionListFilter {
   keyword?: string;
 }
 
@@ -215,7 +215,7 @@ async function loadAcpSession(sessionId: string): Promise<AcpLoadSessionResult> 
   };
 }
 
-export interface AcpNewSessionResult {
+interface AcpNewSessionResult {
   sessionId: string;
   sessionInfo: SessionInfo;
   meta: LoadSessionMeta;
@@ -302,10 +302,7 @@ export async function acpExportSession(sessionId: string): Promise<string> {
   return response.data;
 }
 
-export async function acpImportSession(
-  input: string,
-  source: SessionImportSource
-): Promise<void> {
+export async function acpImportSession(input: string, source: SessionImportSource): Promise<void> {
   const client = await getAcpClient();
   await client.goose.sessionImport_unstable({ input, source });
 }

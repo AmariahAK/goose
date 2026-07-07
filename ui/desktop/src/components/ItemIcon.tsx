@@ -28,7 +28,7 @@ interface IconInfo {
   color: string;
 }
 
-export const getItemIcon = (item: DisplayItem): IconInfo => {
+const getItemIcon = (item: DisplayItem): IconInfo => {
   switch (item.itemType) {
     case 'Builtin':
       return { Icon: Zap, color: '#3b82f6' }; // Blue

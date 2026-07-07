@@ -5,7 +5,7 @@ import type {
 } from '@aaif/goose-sdk';
 import { v7 as uuidv7 } from 'uuid';
 
-export interface AcpRecipeParamRequest {
+interface AcpRecipeParamRequest {
   id: string;
   sessionId: string;
   parameters: RecipeParameterDto[];

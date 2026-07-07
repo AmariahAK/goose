@@ -31,7 +31,7 @@ function mergeWithEmptyLocals(
   return [...emptyLocals, ...listed].slice(0, MAX_RECENT_SESSIONS);
 }
 
-export function sessionToListItem(s: Session): SessionListItem {
+function sessionToListItem(s: Session): SessionListItem {
   return {
     id: s.id,
     name: getSessionDisplayName(s),

@@ -105,16 +105,8 @@ export async function getAcpClient(): Promise<GooseClient> {
   return (await getInitializedAcpClient()).client;
 }
 
-export function getAcpClientSync(): GooseClient | null {
-  return resolvedClient?.client ?? null;
-}
-
 export async function getAcpInitializeResponse(): Promise<InitializeResponse> {
   return (await getInitializedAcpClient()).initializeResponse;
-}
-
-export function isAcpClientReady(): boolean {
-  return resolvedClient !== null;
 }
 
 async function getInitializedAcpClient(): Promise<InitializedAcpClient> {

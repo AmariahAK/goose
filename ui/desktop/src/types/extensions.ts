@@ -1,7 +1,5 @@
 import type { RecipeExtensionDto } from '@aaif/goose-sdk';
 
-export type Envs = Record<string, string>;
-
 type LegacySseExtensionConfig = {
   description?: string | null;
   name: string;

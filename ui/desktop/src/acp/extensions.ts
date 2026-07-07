@@ -2,9 +2,9 @@ import type { ExtensionConfig, ExtensionEntry } from '../types/extensions';
 import type { GooseExtension, GooseExtensionEntry } from '@aaif/goose-sdk';
 import { getAcpClient } from './acpConnection';
 
-export type ConfiguredExtensionEntry = ExtensionEntry & { configKey?: string };
+type ConfiguredExtensionEntry = ExtensionEntry & { configKey?: string };
 
-export interface ConfiguredExtensionsResponse {
+interface ConfiguredExtensionsResponse {
   extensions: ConfiguredExtensionEntry[];
   warnings: string[];
 }

@@ -25,7 +25,7 @@ export type DiagnosticsExtensions = {
   enabled: string[];
 };
 
-export type DiagnosticsTextFile = {
+type DiagnosticsTextFile = {
   content: string;
   path: string;
   truncated: boolean;

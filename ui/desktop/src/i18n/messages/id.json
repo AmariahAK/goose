@@ -3008,12 +3008,6 @@
   "recipeModelSelector.useDefaultProvider": {
     "defaultMessage": "Gunakan penyedia default"
   },
-  "recipeNameField.defaultLabel": {
-    "defaultMessage": "Nama Resep"
-  },
-  "recipeNameField.formatHint": {
-    "defaultMessage": "Akan diformat secara otomatis (huruf kecil, tanda hubung untuk spasi)"
-  },
   "recipeWarningModal.cancel": {
     "defaultMessage": "Batal"
   },
@@ -3707,24 +3701,6 @@
   "sessionIndicators.streaming": {
     "defaultMessage": "Streaming"
   },
-  "sessionViewComponents.empty.description": {
-    "defaultMessage": "Sesi ini tidak berisi pesan apa pun"
-  },
-  "sessionViewComponents.empty.title": {
-    "defaultMessage": "Tidak ada pesan ditemukan"
-  },
-  "sessionViewComponents.error.loading": {
-    "defaultMessage": "Kesalahan Memuat Detail Sesi"
-  },
-  "sessionViewComponents.error.tryAgain": {
-    "defaultMessage": "Coba Lagi"
-  },
-  "sessionViewComponents.role.assistant": {
-    "defaultMessage": "Goose"
-  },
-  "sessionViewComponents.role.user": {
-    "defaultMessage": "Anda"
-  },
   "sessions.action.delete": {
     "defaultMessage": "Hapus sesi"
   },
@@ -4052,9 +4028,6 @@
   "settingsView.title": {
     "defaultMessage": "Pengaturan"
   },
-  "sheet.close": {
-    "defaultMessage": "Tutup"
-  },
   "shortcutRecorder.cancel": {
     "defaultMessage": "Batal"
   },
@@ -4120,15 +4093,6 @@
   },
   "stringUtils.configuredProvider": {
     "defaultMessage": "Penyedia {name} telah dikonfigurasi"
-  },
-  "stringUtils.ollamaApp": {
-    "defaultMessage": "Aplikasi Ollama"
-  },
-  "stringUtils.ollamaNotConfiguredPrefix": {
-    "defaultMessage": "Untuk menggunakan, salah satu"
-  },
-  "stringUtils.ollamaNotConfiguredSuffix": {
-    "defaultMessage": "harus terpasang di mesin Anda dan terbuka, atau Anda harus memasukkan nilai untuk OLLAMA_HOST."
   },
   "subRecipeEditor.addExisting": {
     "defaultMessage": "Tambahkan yang Sudah Ada"

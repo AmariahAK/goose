@@ -23,7 +23,6 @@ import { COST_TRACKING_ENABLED } from '../updates';
 import { CostTracker } from './bottom_menu/CostTracker';
 import { ContextWindowIndicator } from './bottom_menu/ContextWindowIndicator';
 import { DroppedFile, useFileDrop } from '../hooks/useFileDrop';
-import { Recipe } from '../recipe';
 import { MessageQueue, QueuedMessage } from './MessageQueue';
 import { detectInterruption } from '../utils/interruptionDetector';
 import { DiagnosticsModal } from './ui/Diagnostics';
@@ -162,7 +161,6 @@ interface ChatInputProps {
   chatState: ChatState;
   onStop?: () => void;
   onSteerQueuedMessage?: (input: UserInput) => Promise<boolean>;
-  pauseQueueOnStop?: boolean;
   queueProcessingBlocked?: boolean;
   commandHistory?: string[];
   initialValue?: string;
@@ -175,11 +173,8 @@ interface ChatInputProps {
   accumulatedCost?: number | null;
   messages?: Message[];
   disableAnimation?: boolean;
-  recipe?: Recipe | null;
-  recipeId?: string | null;
   recipeAccepted?: boolean;
   initialPrompt?: string;
-  append?: (message: Message) => void;
   onWorkingDirChange?: (newDir: string) => Promise<void> | void;
   inputRef?: React.RefObject<HTMLTextAreaElement | null>;
   sessionModel?: string | null;
@@ -197,7 +192,6 @@ export default function ChatInput({
   chatState = ChatState.Idle,
   onStop,
   onSteerQueuedMessage,
-  pauseQueueOnStop = false,
   queueProcessingBlocked = false,
   commandHistory = [],
   initialValue = '',
@@ -210,11 +204,8 @@ export default function ChatInput({
   accumulatedCost,
   messages = [],
   disableAnimation = false,
-  recipe: _recipe,
-  recipeId: _recipeId,
   recipeAccepted,
   initialPrompt,
-  append: _append,
   onWorkingDirChange,
   inputRef,
   sessionModel,
@@ -335,36 +326,6 @@ export default function ChatInput({
   useEffect(() => {
     setWorkingDirOverride(null);
   }, [sessionId, workingDir]);
-
-  // Save queue state (paused/interrupted) to storage
-  useEffect(() => {
-    try {
-      window.sessionStorage.setItem('goose-queue-paused', JSON.stringify(queuePausedRef.current));
-    } catch (error) {
-      console.error('Error saving queue pause state:', error);
-    }
-  }, [queuedMessages]); // Save when queue changes
-
-  useEffect(() => {
-    try {
-      window.sessionStorage.setItem('goose-queue-interruption', JSON.stringify(lastInterruption));
-    } catch (error) {
-      console.error('Error saving queue interruption state:', error);
-    }
-  }, [lastInterruption]);
-
-  // Cleanup effect - save final state on component unmount
-  useEffect(() => {
-    return () => {
-      // Save final queue state when component unmounts
-      try {
-        window.sessionStorage.setItem('goose-queue-paused', JSON.stringify(queuePausedRef.current));
-        window.sessionStorage.setItem('goose-queue-interruption', JSON.stringify(lastInterruption));
-      } catch (error) {
-        console.error('Error saving queue state on unmount:', error);
-      }
-    };
-  }, [lastInterruption]); // Include lastInterruption in dependency array
 
   // Queue processing
   useEffect(() => {
@@ -1434,13 +1395,6 @@ export default function ChatInput({
     if (onStop) onStop();
   };
 
-  const handleStop = () => {
-    if (pauseQueueOnStop && queuedMessages.length > 0) {
-      pauseRemainingQueue();
-    }
-    if (onStop) onStop();
-  };
-
   const handleResumeQueue = () => {
     queuePausedRef.current = false;
     setLastInterruption(null);
@@ -1807,7 +1761,7 @@ export default function ChatInput({
         {isLoading && !hasSubmittableContent ? (
           <Button
             type="button"
-            onClick={handleStop}
+            onClick={onStop}
             size="sm"
             shape="round"
             variant="ghost"

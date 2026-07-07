@@ -26,7 +26,7 @@ interface UseDisplayModeOptions {
   containerRef: React.RefObject<HTMLDivElement | null>;
 }
 
-export interface DisplayModeState {
+interface DisplayModeState {
   activeDisplayMode: GooseDisplayMode;
   effectiveDisplayModes: McpUiDisplayMode[];
   isStandalone: boolean;

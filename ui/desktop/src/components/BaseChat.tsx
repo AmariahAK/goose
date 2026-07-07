@@ -43,13 +43,6 @@ const i18n = defineMessages({
 
 interface BaseChatProps {
   setChat: (chat: ChatType) => void;
-  onMessageSubmit?: (message: string) => void;
-  renderHeader?: () => React.ReactNode;
-  customChatInputProps?: Record<string, unknown>;
-  customMainLayoutProps?: Record<string, unknown>;
-  contentClassName?: string;
-  disableSearch?: boolean;
-  suppressEmptyState: boolean;
   sessionId: string;
   isActiveSession: boolean;
   initialMessage?: UserInput;
@@ -58,9 +51,6 @@ interface BaseChatProps {
 
 export default function BaseChat({
   setChat,
-  renderHeader,
-  customChatInputProps = {},
-  customMainLayoutProps = {},
   sessionId,
   initialMessage,
   noAutoSubmit,
@@ -96,7 +86,6 @@ export default function BaseChat({
     sessionLoadError,
     tokenState,
     notifications: toolCallNotifications,
-    pauseQueueOnStop,
     queueProcessingBlocked,
     onMessageUpdate,
   } = useChatSession({
@@ -354,12 +343,7 @@ export default function BaseChat({
   if (sessionLoadError) {
     return (
       <div className="h-full flex flex-col min-h-0">
-        <MainPanelLayout
-          backgroundColor={'bg-background-primary'}
-          removeTopPadding={true}
-          {...customMainLayoutProps}
-        >
-          {renderHeader && renderHeader()}
+        <MainPanelLayout backgroundColor={'bg-background-primary'} removeTopPadding={true}>
           <div className="flex flex-col flex-1 min-h-0 relative">
             <div className="flex-1 flex items-center justify-center">
               <div className="flex flex-col items-center justify-center p-8">
@@ -387,14 +371,7 @@ export default function BaseChat({
 
   return (
     <div className="h-full flex flex-col min-h-0">
-      <MainPanelLayout
-        backgroundColor={'bg-background-primary'}
-        removeTopPadding={true}
-        {...customMainLayoutProps}
-      >
-        {/* Custom header */}
-        {renderHeader && renderHeader()}
-
+      <MainPanelLayout backgroundColor={'bg-background-primary'} removeTopPadding={true}>
         {/* Chat container with sticky recipe header */}
         <div className="flex flex-col flex-1 min-h-0 relative">
           {/* Goose watermark - top right */}
@@ -483,7 +460,6 @@ export default function BaseChat({
             chatState={chatState}
             onStop={stopStreaming}
             onSteerQueuedMessage={onSteerQueuedMessage}
-            pauseQueueOnStop={pauseQueueOnStop}
             queueProcessingBlocked={queueProcessingBlocked}
             commandHistory={commandHistory}
             initialValue={initialPrompt}
@@ -504,7 +480,6 @@ export default function BaseChat({
             onFilesProcessed={() => setDroppedFiles([])} // Clear dropped files after processing
             messages={messages}
             disableAnimation={disableAnimation}
-            recipe={recipe}
             recipeAccepted={!hasNotAcceptedRecipe}
             initialPrompt={initialPrompt}
             sessionModel={sessionModel}
@@ -513,7 +488,6 @@ export default function BaseChat({
             workingDir={session?.working_dir}
             onWorkingDirChange={handleWorkingDirChange}
             latestInference={latestInference}
-            {...customChatInputProps}
           />
         </ChatInputCard>
       </MainPanelLayout>

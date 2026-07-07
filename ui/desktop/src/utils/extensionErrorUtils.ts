@@ -5,7 +5,7 @@
 import type { ExtensionLoadResult } from '../types/extensions';
 import { toastService, ExtensionLoadingStatus } from '../toasts';
 
-export const MAX_ERROR_MESSAGE_LENGTH = 70;
+const MAX_ERROR_MESSAGE_LENGTH = 70;
 
 /**
  * Creates recovery hints for the "Ask goose" feature when extension loading fails

@@ -328,7 +328,6 @@ export function useChatSession({
     stopStreaming,
     tokenState,
     notifications: notificationsMap,
-    pauseQueueOnStop: false,
     queueProcessingBlocked,
     onMessageUpdate,
   };

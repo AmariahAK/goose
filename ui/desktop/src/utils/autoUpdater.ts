@@ -54,10 +54,6 @@ export function setAutoDownloadDisabled(disabled: boolean) {
   log.info(`Auto-download ${disabled ? 'disabled' : 'enabled'}`);
 }
 
-export function getAutoDownloadDisabled(): boolean {
-  return autoDownloadDisabled;
-}
-
 // Register IPC handlers (only once)
 export function registerUpdateIpcHandlers() {
   if (ipcUpdateHandlersRegistered) {
@@ -515,7 +511,11 @@ export function setupAutoUpdater(tray?: Tray) {
 
                 if (!autoDownloadDisabled) {
                   log.info('Auto-downloading update via GitHub fallback on startup...');
-                  await githubAutoDownload(result.downloadUrl!, result.latestVersion!, 'on startup');
+                  await githubAutoDownload(
+                    result.downloadUrl!,
+                    result.latestVersion!,
+                    'on startup'
+                  );
                 } else {
                   log.info('Auto-download disabled — skipping GitHub fallback download on startup');
                 }

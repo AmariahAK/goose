@@ -3,7 +3,7 @@ import type { TokenState } from './chat';
 type JsonObject = Record<string, unknown>;
 export type Role = 'user' | 'assistant';
 
-export type Annotations = {
+type Annotations = {
   audience?: Role[];
   lastModified?: string;
   priority?: number;
@@ -18,13 +18,13 @@ type ContentAnnotations =
     }
   | JsonObject;
 
-export type TextContent = {
+type TextContent = {
   _meta?: JsonObject;
   annotations?: Annotations | JsonObject;
   text: string;
 };
 
-export type ImageContent = {
+type ImageContent = {
   _meta?: JsonObject;
   annotations?: Annotations | JsonObject;
   data: string;
@@ -130,21 +130,21 @@ export type ActionRequiredData =
       user_data: unknown;
     };
 
-export type FrontendToolRequest = {
+type FrontendToolRequest = {
   id: string;
   toolCall: JsonObject;
 };
 
-export type ThinkingContent = {
+type ThinkingContent = {
   signature: string;
   thinking: string;
 };
 
-export type RedactedThinkingContent = {
+type RedactedThinkingContent = {
   data: string;
 };
 
-export type ToolConfirmationRequest = {
+type ToolConfirmationRequest = {
   arguments: JsonObject;
   id: string;
   prompt?: string | null;
@@ -164,7 +164,7 @@ export type ToolResponse = {
   toolResult: JsonObject;
 };
 
-export type InferenceMetadata = {
+type InferenceMetadata = {
   provider: string;
   requestedModel: string;
   resolvedModel?: string | null;
@@ -212,7 +212,7 @@ export type Message = {
   role: Role;
 };
 
-export type Conversation = Message[];
+type Conversation = Message[];
 
 export type MessageEvent =
   | {
@@ -253,7 +253,7 @@ export type MessageEvent =
 
 export type ToolRequestMessageContent = ToolRequest & { type: 'toolRequest' };
 export type ToolResponseMessageContent = ToolResponse & { type: 'toolResponse' };
-export type ToolConfirmationRequestContent = ToolConfirmationRequest & {
+type ToolConfirmationRequestContent = ToolConfirmationRequest & {
   type: 'toolConfirmationRequest';
 };
 export type NotificationEvent = Extract<MessageEvent, { type: 'Notification' }>;
@@ -294,7 +294,7 @@ export function createUserMessage(text: string, images?: ImageData[]): Message {
   };
 }
 
-export function generateMessageId(): string {
+function generateMessageId(): string {
   return Math.random().toString(36).substring(2, 10);
 }
 
@@ -364,7 +364,7 @@ export function getToolConfirmationContent(
   );
 }
 
-export function getToolConfirmationRequestContent(
+function getToolConfirmationRequestContent(
   message: Message
 ): ToolConfirmationRequestContent | undefined {
   return message.content.find(
@@ -404,15 +404,6 @@ export function getAnyToolConfirmationData(message: Message): ToolConfirmationDa
   return undefined;
 }
 
-export function getToolConfirmationId(
-  content: ActionRequired & { type: 'actionRequired' }
-): string | undefined {
-  if (content.data.actionType === 'toolConfirmation') {
-    return content.data.id;
-  }
-  return undefined;
-}
-
 export function getPendingToolConfirmationIds(messages: Message[]): Set<string> {
   const pendingIds = new Set<string>();
   const respondedIds = new Set<string>();
@@ -441,9 +432,4 @@ export function getElicitationContent(
     (content): content is ActionRequired & { type: 'actionRequired' } =>
       content.type === 'actionRequired' && content.data.actionType === 'elicitation'
   );
-}
-
-export function hasCompletedToolCalls(message: Message): boolean {
-  const toolRequests = getToolRequests(message);
-  return toolRequests.length > 0;
 }

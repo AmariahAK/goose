@@ -5,7 +5,7 @@ import { getAcpClient } from './acpConnection';
 
 type JsonRecord = Record<string, unknown>;
 export type McpAppTool = ToolListItem;
-export type McpAppResourceResponse = {
+type McpAppResourceResponse = {
   uri: string;
   mimeType: string | null;
   text: string;

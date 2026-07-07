@@ -16,10 +16,7 @@ interface ToolCallStatusIndicatorProps {
   className?: string;
 }
 
-export const ToolCallStatusIndicator: React.FC<ToolCallStatusIndicatorProps> = ({
-  status,
-  className,
-}) => {
+const ToolCallStatusIndicator: React.FC<ToolCallStatusIndicatorProps> = ({ status, className }) => {
   const intl = useIntl();
   const getStatusStyles = () => {
     switch (status) {

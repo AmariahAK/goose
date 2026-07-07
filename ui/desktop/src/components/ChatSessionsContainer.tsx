@@ -53,7 +53,6 @@ export default function ChatSessionsContainer({
               sessionId={session.sessionId}
               initialMessage={session.initialMessage}
               noAutoSubmit={session.noAutoSubmit}
-              suppressEmptyState={false}
               isActiveSession={isVisible}
             />
           </div>

@@ -24,24 +24,6 @@ export function shouldShowNewChatTitle(session: Session): boolean {
   return !session.user_set_name && session.message_count === 0 && !session.recipe?.title;
 }
 
-export function resumeSession(session: Session, setView: setViewType) {
-  const eventDetail = {
-    sessionId: session.id,
-    initialMessage: undefined,
-  };
-
-  window.dispatchEvent(
-    new CustomEvent(AppEvents.ADD_ACTIVE_SESSION, {
-      detail: eventDetail,
-    })
-  );
-
-  setView('pair', {
-    disableAnimation: true,
-    resumeSessionId: session.id,
-  });
-}
-
 interface CreateSessionOptions {
   recipeDeeplink?: string;
   recipeId?: string;

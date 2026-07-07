@@ -16,7 +16,7 @@ export const BLOCKED_PROTOCOLS = [
 ];
 
 // Protocols that are safe to open without confirmation
-export const SAFE_PROTOCOLS = [
+const SAFE_PROTOCOLS = [
   'http:',
   'https:',
   'mailto:',

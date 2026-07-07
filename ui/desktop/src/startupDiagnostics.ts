@@ -8,7 +8,7 @@ export interface StartupTraceEvent {
   details?: Record<string, unknown>;
 }
 
-export interface StartupDiagnostics {
+interface StartupDiagnostics {
   attemptId: string;
   startedAt: string;
   goosedPath: string | null;
@@ -41,14 +41,14 @@ export interface GooseServeStartupDiagnostics {
   events: StartupTraceEvent[];
 }
 
-export interface StartupTrace {
+interface StartupTrace {
   diagnosticsPath: string;
   diagnostics: StartupDiagnostics;
   record: (name: string, details?: Record<string, unknown>) => void;
   flush: () => void;
 }
 
-export interface GooseServeStartupTrace {
+interface GooseServeStartupTrace {
   diagnosticsPath: string;
   diagnostics: GooseServeStartupDiagnostics;
   record: (name: string, details?: Record<string, unknown>) => void;

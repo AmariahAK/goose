@@ -9,10 +9,7 @@ export function setTelemetryEnabled(_enabled: boolean): void {
   // Frontend telemetry is disabled.
 }
 
-function sendEvent(
-  _eventName: string,
-  _properties: Record<string, unknown> = {}
-): void {
+function sendEvent(_eventName: string, _properties: Record<string, unknown> = {}): void {
   // Frontend telemetry is disabled.
 }
 
@@ -32,7 +29,7 @@ function sendEvent(
  * - Onboarding funnel (where users drop off during setup)
  * - Frontend-only crashes (React errors, unhandled rejections)
  */
-export type AnalyticsEvent =
+type AnalyticsEvent =
   | { name: 'page_view'; properties: { page: string; referrer?: string } }
   | { name: 'onboarding_started'; properties: Record<string, never> }
   | { name: 'onboarding_provider_selected'; properties: { provider?: string; method?: string } }
@@ -204,7 +201,7 @@ export function trackPageView(page: string, referrer?: string): void {
   });
 }
 
-export function trackError(
+function trackError(
   errorType: string,
   options: {
     component?: string;
@@ -271,10 +268,7 @@ export function trackOnboardingCompleted(provider: string, model?: string): void
   onboardingStartTime = null;
 }
 
-export function trackOnboardingSetupFailed(
-  provider: 'local',
-  errorMessage?: string
-): void {
+export function trackOnboardingSetupFailed(provider: 'local', errorMessage?: string): void {
   trackEvent({
     name: 'onboarding_setup_failed',
     properties: { provider, error_message: errorMessage },
@@ -318,7 +312,7 @@ export function getErrorType(error: unknown): string {
   return String(error).slice(0, 200);
 }
 
-export function getStackSummary(error: unknown): string | undefined {
+function getStackSummary(error: unknown): string | undefined {
   if (!(error instanceof Error) || !error.stack) {
     return undefined;
   }
@@ -447,27 +441,6 @@ export function trackScheduleRunNow(success: boolean, errorDetails?: string): vo
 // Recipe Tracking
 // ============================================================================
 
-export function trackRecipeCreated(success: boolean, errorDetails?: string): void {
-  trackEvent({
-    name: 'recipe_created',
-    properties: { success, error_details: errorDetails },
-  });
-}
-
-export function trackRecipeImported(success: boolean, errorDetails?: string): void {
-  trackEvent({
-    name: 'recipe_imported',
-    properties: { success, error_details: errorDetails },
-  });
-}
-
-export function trackRecipeEdited(success: boolean, errorDetails?: string): void {
-  trackEvent({
-    name: 'recipe_edited',
-    properties: { success, error_details: errorDetails },
-  });
-}
-
 export function trackRecipeDeleted(success: boolean, errorDetails?: string): void {
   trackEvent({
     name: 'recipe_deleted',
@@ -556,30 +529,9 @@ export function trackVoiceDictation(
   });
 }
 
-export function trackModeChanged(fromMode: string, toMode: string): void {
-  trackEvent({
-    name: 'input_mode_changed',
-    properties: { from_mode: fromMode, to_mode: toMode },
-  });
-}
-
 export function trackDiagnosticsOpened(): void {
   trackEvent({
     name: 'input_diagnostics_opened',
-    properties: {},
-  });
-}
-
-export function trackCreateRecipeOpened(): void {
-  trackEvent({
-    name: 'input_create_recipe_opened',
-    properties: {},
-  });
-}
-
-export function trackEditRecipeOpened(): void {
-  trackEvent({
-    name: 'input_edit_recipe_opened',
     properties: {},
   });
 }

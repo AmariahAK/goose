@@ -11,9 +11,6 @@ const parameterSchema = z.object({
   options: z.array(z.string()).nullable().optional(),
 });
 
-// Export the parameter type for use in components
-export type RecipeParameter = z.infer<typeof parameterSchema>;
-
 // Zod schema for SubRecipe - matching ACP SubRecipeDto type
 const subRecipeSchema = z.object({
   name: z.string().min(1, 'Subrecipe name is required'),

@@ -1,6 +1,6 @@
 import type { Stream } from '@aaif/goose-sdk';
 
-export type ClosableAcpStream = Stream & {
+type ClosableAcpStream = Stream & {
   close: () => void;
 };
 

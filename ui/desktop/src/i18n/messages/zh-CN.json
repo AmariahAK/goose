@@ -3008,12 +3008,6 @@
   "recipeModelSelector.useDefaultProvider": {
     "defaultMessage": "使用默认提供商"
   },
-  "recipeNameField.defaultLabel": {
-    "defaultMessage": "配方名称"
-  },
-  "recipeNameField.formatHint": {
-    "defaultMessage": "将自动格式化（小写字母，空格转为短横线）"
-  },
   "recipesView.addSchedule": {
     "defaultMessage": "添加计划"
   },
@@ -3839,24 +3833,6 @@
   "sessions.toast.updateFailed": {
     "defaultMessage": "更新会话描述失败：{error}"
   },
-  "sessionViewComponents.empty.description": {
-    "defaultMessage": "此会话不包含任何消息"
-  },
-  "sessionViewComponents.empty.title": {
-    "defaultMessage": "未找到消息"
-  },
-  "sessionViewComponents.error.loading": {
-    "defaultMessage": "加载会话详情出错"
-  },
-  "sessionViewComponents.error.tryAgain": {
-    "defaultMessage": "重试"
-  },
-  "sessionViewComponents.role.assistant": {
-    "defaultMessage": "Goose"
-  },
-  "sessionViewComponents.role.user": {
-    "defaultMessage": "你"
-  },
   "settings.appearance.description": {
     "defaultMessage": "配置 goose 在你系统中的外观"
   },
@@ -4052,9 +4028,6 @@
   "settingsView.title": {
     "defaultMessage": "设置"
   },
-  "sheet.close": {
-    "defaultMessage": "关闭"
-  },
   "shortcutRecorder.cancel": {
     "defaultMessage": "取消"
   },
@@ -4120,15 +4093,6 @@
   },
   "stringUtils.configuredProvider": {
     "defaultMessage": "{name} 提供商已配置"
-  },
-  "stringUtils.ollamaApp": {
-    "defaultMessage": "Ollama 应用"
-  },
-  "stringUtils.ollamaNotConfiguredPrefix": {
-    "defaultMessage": "要使用，必须"
-  },
-  "stringUtils.ollamaNotConfiguredSuffix": {
-    "defaultMessage": "在你的机器上已安装并打开，或者你必须为 OLLAMA_HOST 设置一个值。"
   },
   "subRecipeEditor.addExisting": {
     "defaultMessage": "添加已有"

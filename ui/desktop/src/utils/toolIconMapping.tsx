@@ -19,7 +19,7 @@ import {
   Tool,
 } from '../components/icons/toolcalls';
 
-export type ToolIconProps = {
+type ToolIconProps = {
   className?: string;
 };
 
@@ -28,7 +28,7 @@ export type ToolIconProps = {
  * @param toolName - The name of the tool (extracted from toolCall.name)
  * @returns React component for the tool icon
  */
-export const getToolIcon = (toolName: string): React.ComponentType<ToolIconProps> => {
+const getToolIcon = (toolName: string): React.ComponentType<ToolIconProps> => {
   switch (toolName) {
     // Developer Extension Tools
     case 'text_editor':
@@ -97,7 +97,7 @@ export const getToolIcon = (toolName: string): React.ComponentType<ToolIconProps
  * @param extensionName - The name of the extension
  * @returns React component for the extension icon
  */
-export const getExtensionIcon = (extensionName: string): React.ComponentType<ToolIconProps> => {
+const getExtensionIcon = (extensionName: string): React.ComponentType<ToolIconProps> => {
   switch (extensionName) {
     case 'developer':
       return Code2;
@@ -115,7 +115,7 @@ export const getExtensionIcon = (extensionName: string): React.ComponentType<Too
  * @param toolCallName - Full tool call name (e.g., "developer__text_editor")
  * @returns Extracted tool name (e.g., "text_editor")
  */
-export const extractToolName = (toolCallName: string): string => {
+const extractToolName = (toolCallName: string): string => {
   const lastIndex = toolCallName.lastIndexOf('__');
   return lastIndex === -1 ? toolCallName : toolCallName.substring(lastIndex + 2);
 };
@@ -125,7 +125,7 @@ export const extractToolName = (toolCallName: string): string => {
  * @param toolCallName - Full tool call name (e.g., "developer__text_editor")
  * @returns Extracted extension name (e.g., "developer")
  */
-export const extractExtensionName = (toolCallName: string): string => {
+const extractExtensionName = (toolCallName: string): string => {
   const lastIndex = toolCallName.lastIndexOf('__');
   return lastIndex === -1 ? '' : toolCallName.substring(0, lastIndex);
 };

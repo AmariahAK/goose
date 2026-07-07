@@ -21,7 +21,7 @@ const i18n = defineMessages({
   },
 });
 
-export interface ResponseStyle {
+interface ResponseStyle {
   key: string;
   label: MessageDescriptor;
   description: MessageDescriptor;
@@ -70,7 +70,9 @@ export function ResponseStyleSelectionItem({
           <div>
             <h3 className="text-text-primary">{intl.formatMessage(style.label)}</h3>
             {showDescription && (
-              <p className="text-xs text-text-secondary mt-[2px]">{intl.formatMessage(style.description)}</p>
+              <p className="text-xs text-text-secondary mt-[2px]">
+                {intl.formatMessage(style.description)}
+              </p>
             )}
           </div>
         </div>

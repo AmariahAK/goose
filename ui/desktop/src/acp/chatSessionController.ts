@@ -5,11 +5,7 @@ import { ChatState } from '../types/chatState';
 import type { Session } from '../types/session';
 import { errorMessage } from '../utils/conversionUtils';
 import { showExtensionLoadResults } from '../utils/extensionErrorUtils';
-import {
-  createUserMessage,
-  getPendingToolConfirmationIds,
-  type Message,
-} from '../types/message';
+import { createUserMessage, getPendingToolConfirmationIds, type Message } from '../types/message';
 import {
   acpChatSessionActions,
   acpChatSessionStore,
@@ -29,19 +25,19 @@ import {
   type AcpRecipeOptions,
 } from './sessions';
 
-export interface AcpLoadSessionOptions {
+interface AcpLoadSessionOptions {
   onSessionLoaded?: () => void;
 }
 
-export interface AcpSnapshotOptions {
+interface AcpSnapshotOptions {
   getCurrentSnapshot(): AcpChatSessionSnapshot | undefined;
 }
 
-export interface AcpSubmitMessageOptions extends AcpSnapshotOptions {
+interface AcpSubmitMessageOptions extends AcpSnapshotOptions {
   onFinish(error?: string): void | Promise<void>;
 }
 
-export interface AcpChatSessionController {
+interface AcpChatSessionController {
   createSession(
     cwd: string,
     gooseExtensions: GooseExtension[],

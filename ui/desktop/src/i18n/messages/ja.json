@@ -3008,12 +3008,6 @@
   "recipeModelSelector.useDefaultProvider": {
     "defaultMessage": "デフォルトプロバイダーを使用"
   },
-  "recipeNameField.defaultLabel": {
-    "defaultMessage": "レシピ名"
-  },
-  "recipeNameField.formatHint": {
-    "defaultMessage": "自動的に整形されます（小文字、スペースはダッシュ）"
-  },
   "recipesView.addSchedule": {
     "defaultMessage": "スケジュールを追加"
   },
@@ -3839,24 +3833,6 @@
   "sessions.toast.updateFailed": {
     "defaultMessage": "セッションの説明を更新できませんでした: {error}"
   },
-  "sessionViewComponents.empty.description": {
-    "defaultMessage": "このセッションにはメッセージがありません"
-  },
-  "sessionViewComponents.empty.title": {
-    "defaultMessage": "メッセージが見つかりません"
-  },
-  "sessionViewComponents.error.loading": {
-    "defaultMessage": "セッション詳細の読み込みエラー"
-  },
-  "sessionViewComponents.error.tryAgain": {
-    "defaultMessage": "再試行"
-  },
-  "sessionViewComponents.role.assistant": {
-    "defaultMessage": "Goose"
-  },
-  "sessionViewComponents.role.user": {
-    "defaultMessage": "あなた"
-  },
   "settings.appearance.description": {
     "defaultMessage": "システム上でのgooseの表示を設定します"
   },
@@ -4052,9 +4028,6 @@
   "settingsView.title": {
     "defaultMessage": "設定"
   },
-  "sheet.close": {
-    "defaultMessage": "閉じる"
-  },
   "shortcutRecorder.cancel": {
     "defaultMessage": "キャンセル"
   },
@@ -4120,15 +4093,6 @@
   },
   "stringUtils.configuredProvider": {
     "defaultMessage": "{name}プロバイダーが設定されています"
-  },
-  "stringUtils.ollamaApp": {
-    "defaultMessage": "Ollamaアプリ"
-  },
-  "stringUtils.ollamaNotConfiguredPrefix": {
-    "defaultMessage": "使用するには、"
-  },
-  "stringUtils.ollamaNotConfiguredSuffix": {
-    "defaultMessage": "をマシンにインストールして開いておくか、OLLAMA_HOSTの値を入力する必要があります。"
   },
   "subRecipeEditor.addExisting": {
     "defaultMessage": "既存を追加"

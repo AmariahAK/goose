@@ -25,7 +25,7 @@ type DeprecatedBundledExtension = {
   id: string;
 };
 
-export function getDeprecatedBundledExtensions(): DeprecatedBundledExtension[] {
+function getDeprecatedBundledExtensions(): DeprecatedBundledExtension[] {
   return deprecatedBundledExtensionsData as DeprecatedBundledExtension[];
 }
 

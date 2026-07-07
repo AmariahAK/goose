@@ -1,7 +1,7 @@
 import type { InitializeResponse } from '@agentclientprotocol/sdk';
 import { getAcpInitializeResponse } from './acpConnection';
 
-export interface AcpFeatureCapabilities {
+interface AcpFeatureCapabilities {
   localInference: boolean;
 }
 

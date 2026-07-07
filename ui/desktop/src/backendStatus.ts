@@ -7,11 +7,11 @@ const PROBE_TIMEOUT_MS = 1000;
 type FetchInput = Parameters<typeof globalThis.fetch>[0];
 type FetchInit = Parameters<typeof globalThis.fetch>[1];
 
-export interface CheckServerStatusOptions {
+interface CheckServerStatusOptions {
   onEvent?: (name: string, details?: Record<string, unknown>) => void;
 }
 
-export interface CheckBackendStatusParams {
+interface CheckBackendStatusParams {
   baseUrl: string;
   serverSecret: string;
   fetch: typeof globalThis.fetch;
@@ -19,7 +19,7 @@ export interface CheckBackendStatusParams {
   options?: CheckServerStatusOptions;
 }
 
-export const isFatalError = (line: string): boolean => {
+const isFatalError = (line: string): boolean => {
   const fatalPatterns = [/panicked at/, /RUST_BACKTRACE/, /fatal error/i];
   return fatalPatterns.some((pattern) => pattern.test(line));
 };

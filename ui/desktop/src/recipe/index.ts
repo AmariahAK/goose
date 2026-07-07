@@ -25,7 +25,7 @@ export type RecipeManifest = Omit<RecipeListEntryDto, 'recipe'> & {
   recipe: Recipe;
 };
 
-export async function encodeRecipe(recipe: Recipe): Promise<string> {
+async function encodeRecipe(recipe: Recipe): Promise<string> {
   try {
     return await acpEncodeRecipe(recipe);
   } catch (error) {
@@ -34,7 +34,7 @@ export async function encodeRecipe(recipe: Recipe): Promise<string> {
   }
 }
 
-export async function decodeRecipe(deeplink: string): Promise<Recipe> {
+async function decodeRecipe(deeplink: string): Promise<Recipe> {
   try {
     return stripEmptyExtensions(await acpDecodeRecipe(deeplink));
   } catch (error) {

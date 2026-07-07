@@ -7,7 +7,7 @@ import { getAcpClient } from './acpConnection';
 
 export type { DictationProviderStatusEntry };
 
-export type DictationProviders = Record<string, DictationProviderStatusEntry>;
+type DictationProviders = Record<string, DictationProviderStatusEntry>;
 export type LocalDictationModel = DictationLocalModelStatus;
 export type LocalDictationDownloadProgress = DictationDownloadProgress;
 

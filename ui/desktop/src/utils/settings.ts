@@ -19,7 +19,7 @@ export interface KeyboardShortcuts {
   toggleNavigation: string | null;
 }
 
-export type DefaultKeyboardShortcuts = {
+type DefaultKeyboardShortcuts = {
   [K in keyof KeyboardShortcuts]: string;
 };
 

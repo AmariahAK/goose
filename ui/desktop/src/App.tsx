@@ -88,9 +88,6 @@ const PairRouteWrapper = ({
     initialMessage?: UserInput;
     noAutoSubmit?: boolean;
   }>;
-  setActiveSessions: (
-    sessions: Array<{ sessionId: string; initialMessage?: UserInput; noAutoSubmit?: boolean }>
-  ) => void;
 }) => {
   const { extensionsList } = useConfig();
   const location = useLocation();
@@ -637,15 +634,7 @@ export function AppInner() {
               }
             >
               <Route index element={<HubRouteWrapper />} />
-              <Route
-                path="pair"
-                element={
-                  <PairRouteWrapper
-                    activeSessions={activeSessions}
-                    setActiveSessions={setActiveSessions}
-                  />
-                }
-              />
+              <Route path="pair" element={<PairRouteWrapper activeSessions={activeSessions} />} />
               <Route path="settings" element={<SettingsRoute />} />
               <Route
                 path="extensions"

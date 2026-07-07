@@ -51,7 +51,7 @@ const globalApprovalState = new Map<
   }
 >();
 
-export interface ToolApprovalData {
+interface ToolApprovalData {
   id: string;
   toolName: string;
   prompt?: string;
@@ -133,7 +133,11 @@ export default function ToolApprovalButtons({ data }: { data: ToolApprovalData }
             {intl.formatMessage(i18n.alwaysAllow)}
           </Button>
         )}
-        <Button className="rounded-full" variant="outline" onClick={() => handleAction('deny_once')}>
+        <Button
+          className="rounded-full"
+          variant="outline"
+          onClick={() => handleAction('deny_once')}
+        >
           {intl.formatMessage(i18n.deny)}
         </Button>
       </div>

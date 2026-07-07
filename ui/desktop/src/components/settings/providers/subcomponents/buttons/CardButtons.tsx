@@ -29,7 +29,7 @@ interface ActionButtonProps extends React.ComponentProps<typeof Button> {
   iconClassName?: string;
 }
 
-export function ActionButton({
+function ActionButton({
   icon: Icon,
   size = 'sm',
   variant = 'outline',

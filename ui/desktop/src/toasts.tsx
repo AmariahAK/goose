@@ -10,7 +10,7 @@ import {
 } from './components/GroupedExtensionLoadingToast';
 import { getInitialWorkingDir } from './utils/workingDir';
 
-export interface ToastServiceOptions {
+interface ToastServiceOptions {
   silent?: boolean;
   shouldThrow?: boolean;
 }
@@ -233,7 +233,7 @@ type ToastLoadingProps = {
   toastOptions?: ToastOptions;
 };
 
-export function toastLoading({ title, msg, toastOptions }: ToastLoadingProps) {
+function toastLoading({ title, msg, toastOptions }: ToastLoadingProps) {
   return toast.loading(
     <div>
       {title ? <strong className="font-medium">{title}</strong> : null}

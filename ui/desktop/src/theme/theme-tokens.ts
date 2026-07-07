@@ -203,8 +203,8 @@ const darkColorTokens: ColorTokens = {
 // ---------------------------------------------------------------------------
 // Merged token maps — used by applyThemeTokens() and buildMcpHostStyles()
 // ---------------------------------------------------------------------------
-export const lightTokens: ThemeTokens = { ...baseTokens, ...lightColorTokens };
-export const darkTokens: ThemeTokens = { ...baseTokens, ...darkColorTokens };
+const lightTokens: ThemeTokens = { ...baseTokens, ...lightColorTokens };
+const darkTokens: ThemeTokens = { ...baseTokens, ...darkColorTokens };
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -266,7 +266,7 @@ export function buildMcpHostStyles(): McpUiHostStyles {
 /**
  * Resolve the current theme from localStorage / system preference.
  */
-export function getResolvedTheme(): 'light' | 'dark' {
+function getResolvedTheme(): 'light' | 'dark' {
   const useSystem = localStorage.getItem('use_system_theme') !== 'false';
   if (useSystem) {
     return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';

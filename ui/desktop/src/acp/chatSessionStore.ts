@@ -49,11 +49,11 @@ const initialTokenState: TokenState = {
   accumulatedTotalTokens: 0,
 };
 
-export interface AcpChatSessionStore {
+interface AcpChatSessionStore {
   getSnapshot(sessionId: string): AcpChatSessionSnapshot | undefined;
 }
 
-export interface AcpChatSessionActions {
+interface AcpChatSessionActions {
   deleteSnapshot(sessionId: string): void;
 
   applyAcpSessionNotification(notification: SessionNotification): AcpChatSessionSnapshot;

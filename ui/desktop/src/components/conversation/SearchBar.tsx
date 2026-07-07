@@ -59,7 +59,7 @@ interface SearchBarProps {
 /**
  * SearchBar provides a search input with case-sensitive toggle and result navigation.
  */
-export const SearchBar: React.FC<SearchBarProps> = ({
+const SearchBar: React.FC<SearchBarProps> = ({
   onSearch,
   onClose,
   onNavigate,

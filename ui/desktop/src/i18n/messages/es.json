@@ -3008,12 +3008,6 @@
   "recipeModelSelector.useDefaultProvider": {
     "defaultMessage": "Usar el proveedor por defecto"
   },
-  "recipeNameField.defaultLabel": {
-    "defaultMessage": "Nombre de la receta"
-  },
-  "recipeNameField.formatHint": {
-    "defaultMessage": "Se formateará automáticamente (minúsculas, guiones en lugar de espacios)"
-  },
   "recipesView.addSchedule": {
     "defaultMessage": "Añadir programación"
   },
@@ -3839,24 +3833,6 @@
   "sessions.toast.updateFailed": {
     "defaultMessage": "No se pudo actualizar la descripción de la sesión: {error}"
   },
-  "sessionViewComponents.empty.description": {
-    "defaultMessage": "Esta sesión no contiene ningún mensaje"
-  },
-  "sessionViewComponents.empty.title": {
-    "defaultMessage": "No se encontraron mensajes"
-  },
-  "sessionViewComponents.error.loading": {
-    "defaultMessage": "Error al cargar los detalles de la sesión"
-  },
-  "sessionViewComponents.error.tryAgain": {
-    "defaultMessage": "Reintentar"
-  },
-  "sessionViewComponents.role.assistant": {
-    "defaultMessage": "Goose"
-  },
-  "sessionViewComponents.role.user": {
-    "defaultMessage": "Tú"
-  },
   "settings.appearance.description": {
     "defaultMessage": "Configura cómo se ve goose en tu sistema"
   },
@@ -4052,9 +4028,6 @@
   "settingsView.title": {
     "defaultMessage": "Ajustes"
   },
-  "sheet.close": {
-    "defaultMessage": "Cerrar"
-  },
   "shortcutRecorder.cancel": {
     "defaultMessage": "Cancelar"
   },
@@ -4120,15 +4093,6 @@
   },
   "stringUtils.configuredProvider": {
     "defaultMessage": "El proveedor {name} está configurado"
-  },
-  "stringUtils.ollamaApp": {
-    "defaultMessage": "App de Ollama"
-  },
-  "stringUtils.ollamaNotConfiguredPrefix": {
-    "defaultMessage": "Para usarlo, o bien la"
-  },
-  "stringUtils.ollamaNotConfiguredSuffix": {
-    "defaultMessage": "debe estar instalada en tu máquina y abierta, o debes ingresar un valor para OLLAMA_HOST."
   },
   "subRecipeEditor.addExisting": {
     "defaultMessage": "Agregar existente"
