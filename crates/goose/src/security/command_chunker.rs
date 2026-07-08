@@ -102,7 +102,7 @@ mod tests {
     }
 
     #[test]
-    fn boundary_straddling_payload_survives_in_a_window() {
+    fn boundary_straddling_payload_stays_contiguous_in_a_window() {
         let max_chars = 300usize;
         let payload = "rm -rf /";
         let prefix = "x".repeat(max_chars - 4);
