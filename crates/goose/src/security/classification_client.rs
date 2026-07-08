@@ -224,15 +224,17 @@ impl ClassificationClient {
         use crate::security::command_chunker::chunk_command;
 
         let chunks = chunk_command(text);
+        let chunk_count = chunks.len();
 
-        if chunks.len() == 1 {
+        if chunk_count == 1 {
             return self.classify(text).await;
         }
 
         tracing::debug!(
-            "Command classifier: split {} chars into {} overlapping window(s)",
-            text.len(),
-            chunks.len()
+            security.event_type = "command_classifier_chunking",
+            scanner.command_chars = text.len(),
+            scanner.chunk_count = chunk_count,
+            "command classifier: split input into overlapping windows"
         );
 
         let results: Vec<Result<f32>> = stream::iter(chunks)
@@ -258,9 +260,13 @@ impl ClassificationClient {
         if let Some(err) = first_error {
             let failure_count = total - confidences.len();
             tracing::warn!(
-                "Command chunk classification failed for {}/{} window(s); failing closed to pattern-based fallback",
-                failure_count,
-                total
+                monotonic_counter.goose.command_classifier_chunk_failure = 1,
+                security.event_type = "command_classifier_chunking",
+                security.threat_type = "command_injection",
+                scanner.chunk_count = total,
+                scanner.chunk_failure_count = failure_count,
+                scanner.fail_closed = true,
+                "command classifier chunk scan failed; failing closed to pattern-based fallback"
             );
             return Err(err.context(format!(
                 "{}/{} command classifier windows failed",
@@ -270,8 +276,10 @@ impl ClassificationClient {
 
         let max_confidence = confidences.into_iter().fold(0.0_f32, f32::max);
         tracing::debug!(
-            "Command classifier chunked result: max_confidence={:.3}",
-            max_confidence
+            security.event_type = "command_classifier_chunking",
+            scanner.chunk_count = total,
+            scanner.max_confidence = max_confidence,
+            "command classifier chunked scan complete"
         );
         Ok(max_confidence)
     }
