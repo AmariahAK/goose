@@ -72,8 +72,8 @@ mod tests {
         let text: String = (0..1000).map(|i| (b'a' + (i % 26) as u8) as char).collect();
         let chunks = chunk_with_params(&text, 100, 0.25);
         assert!(chunks.len() > 1);
-        assert_eq!(&chunks[0], &text[0..100]);
-        assert_eq!(&chunks[1][..25], &text[75..100]);
+        assert_eq!(chunks[0].as_bytes(), &text.as_bytes()[0..100]);
+        assert_eq!(&chunks[1].as_bytes()[..25], &text.as_bytes()[75..100]);
     }
 
     #[test]
