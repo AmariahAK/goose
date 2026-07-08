@@ -18,6 +18,7 @@ use tokio::sync::OnceCell;
 #[cfg(not(windows))]
 use tokio::task::JoinHandle;
 use tokio_stream::{wrappers::SplitStream, StreamExt};
+use tokio_util::sync::CancellationToken;
 
 use crate::subprocess::SubprocessExt;
 
@@ -320,6 +321,8 @@ pub struct ShellTool {
 
 impl ShellTool {
     pub fn new(use_login_shell_path: bool) -> std::io::Result<Self> {
+        #[cfg(windows)]
+        let _unused = use_login_shell_path;
         Ok(Self {
             output_dir: tempfile::tempdir()?,
             call_index: AtomicUsize::new(0),
@@ -343,13 +346,15 @@ impl ShellTool {
     }
 
     pub async fn shell(&self, params: ShellParams) -> CallToolResult {
-        self.shell_with_cwd(params, None).await
+        self.shell_with_cwd(params, None, CancellationToken::new())
+            .await
     }
 
     pub async fn shell_with_cwd(
         &self,
         params: ShellParams,
         working_dir: Option<&std::path::Path>,
+        cancellation_token: CancellationToken,
     ) -> CallToolResult {
         if params.command.trim().is_empty() {
             return Self::error_result("Command cannot be empty.", None);
@@ -367,6 +372,7 @@ impl ShellTool {
             params.timeout_secs,
             working_dir,
             login_path_ref,
+            cancellation_token,
         )
         .await
         {
@@ -508,6 +514,7 @@ async fn run_command(
     timeout_secs: Option<u64>,
     working_dir: Option<&std::path::Path>,
     login_path: Option<&str>,
+    cancellation_token: CancellationToken,
 ) -> Result<ExecutionOutput, String> {
     let mut command = build_shell_command(command_line, working_dir, login_path);
 
@@ -534,23 +541,35 @@ async fn run_command(
 
     let mut timed_out = false;
     let exit_code = if let Some(timeout_secs) = timeout_secs.filter(|value| *value > 0) {
-        match tokio::time::timeout(Duration::from_secs(timeout_secs), child.wait()).await {
-            Ok(wait_result) => wait_result
-                .map_err(|error| format!("Failed waiting on shell command: {}", error))?
-                .code(),
-            Err(_) => {
-                timed_out = true;
+        tokio::select! {
+            result = tokio::time::timeout(Duration::from_secs(timeout_secs), child.wait()) => match result {
+                Ok(wait_result) => wait_result
+                    .map_err(|error| format!("Failed waiting on shell command: {}", error))?
+                    .code(),
+                Err(_) => {
+                    timed_out = true;
+                    let _ = child.start_kill();
+                    let _ = child.wait().await;
+                    None
+                }
+            },
+            _ = cancellation_token.cancelled() => {
                 let _ = child.start_kill();
                 let _ = child.wait().await;
                 None
             }
         }
     } else {
-        child
-            .wait()
-            .await
-            .map_err(|error| format!("Failed waiting on shell command: {}", error))?
-            .code()
+        tokio::select! {
+            result = child.wait() => result
+                .map_err(|error| format!("Failed waiting on shell command: {}", error))?
+                .code(),
+            _ = cancellation_token.cancelled() => {
+                let _ = child.start_kill();
+                let _ = child.wait().await;
+                None
+            }
+        }
     };
 
     const OUTPUT_DRAIN_TIMEOUT_MILLIS: u64 = 500;
@@ -845,6 +864,7 @@ mod tests {
                     timeout_secs: None,
                 },
                 Some(dir.path()),
+                CancellationToken::new(),
             )
             .await;
 
@@ -852,6 +872,41 @@ mod tests {
         let observed = std::fs::canonicalize(extract_text(&result)).unwrap();
         let expected = std::fs::canonicalize(dir.path()).unwrap();
         assert_eq!(observed, expected);
+    }
+
+    #[cfg(not(windows))]
+    #[tokio::test]
+    async fn shell_kills_child_on_cancellation() {
+        let tool = ShellTool::new_for_test().unwrap();
+        let token = CancellationToken::new();
+        let token_clone = token.clone();
+
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            token_clone.cancel();
+        });
+
+        let start = std::time::Instant::now();
+        let result = tool
+            .shell_with_cwd(
+                ShellParams {
+                    command: "sleep 30".to_string(),
+                    timeout_secs: None,
+                },
+                None,
+                token,
+            )
+            .await;
+
+        assert!(
+            start.elapsed().as_secs() < 5,
+            "shell should return quickly after cancellation, not wait for the command"
+        );
+        let shell_output = extract_shell_output(&result);
+        assert!(
+            shell_output.exit_code.is_none(),
+            "cancelled process should have no exit code"
+        );
     }
 
     #[cfg(not(windows))]
