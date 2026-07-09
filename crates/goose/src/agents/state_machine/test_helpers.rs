@@ -73,14 +73,24 @@ pub struct ScriptedProvider {
 impl ScriptedProvider {
     /// Build from a fixed sequence of steps, one consumed per `stream()` call.
     pub fn from_steps(steps: impl IntoIterator<Item = Step>) -> Self {
-        let queue: Mutex<VecDeque<Result<Vec<Message>, ProviderError>>> =
-            Mutex::new(steps.into_iter().map(Step::into_outcome).collect());
+        // Steps become messages lazily, at the call, so their `created` stamps
+        // follow the conversation. Messages pre-built here would all carry the
+        // construction time, and the persisted conversation is ordered by
+        // `created_timestamp` (second resolution) — once a test crosses a
+        // second boundary, a pre-built reply sorts before the tool response it
+        // answers and the loop reruns the LLM op on a user-tailed conversation.
+        let queue: Mutex<VecDeque<Step>> = Mutex::new(steps.into_iter().collect());
         Self::from_fn_result(move |_messages, _tools| {
-            queue.lock().unwrap().pop_front().unwrap_or_else(|| {
-                Ok(vec![
-                    Message::assistant().with_text("(no more scripted steps)")
-                ])
-            })
+            queue
+                .lock()
+                .unwrap()
+                .pop_front()
+                .map(Step::into_outcome)
+                .unwrap_or_else(|| {
+                    Ok(vec![
+                        Message::assistant().with_text("(no more scripted steps)")
+                    ])
+                })
         })
     }
 

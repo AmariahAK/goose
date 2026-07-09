@@ -458,6 +458,47 @@ async fn history_slash_command_replaces_history_and_yields() -> Result<()> {
 }
 
 #[tokio::test]
+async fn repeated_context_length_errors_stop_after_capped_retries() -> Result<()> {
+    use crate::conversation::message::MessageErrorKind;
+    use goose_providers::errors::ProviderError;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    // Turns (even calls) always blow the context; compaction summaries (odd
+    // calls) succeed but never help. Without a working retry cap this cycles
+    // compact/retry forever.
+    let calls = Arc::new(AtomicUsize::new(0));
+    let calls_for_fn = calls.clone();
+    let provider = Arc::new(ScriptedProvider::from_fn_result(
+        move |_messages, _tools| match calls_for_fn.fetch_add(1, Ordering::SeqCst) % 2 {
+            0 => Err(ProviderError::ContextLengthExceeded("too long".to_string())),
+            _ => Ok(vec![Message::assistant().with_text("summary")]),
+        },
+    ));
+    let harness = TestHarness::with_provider(provider).await;
+
+    let events = tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        harness.run_events("hello", 10),
+    )
+    .await
+    .expect("retry cap did not stop the compact/retry cycle")?;
+
+    // Failing turn, then two capped compact-and-retry cycles, then ExitOnError
+    // yields: turn, summary, retry, summary, retry.
+    assert_eq!(harness.provider.call_count(), 5, "events: {events:#?}");
+
+    let persisted = harness.persisted_messages().await?;
+    let last = persisted.last().expect("a persisted message");
+    assert_eq!(
+        last.error_kind(),
+        Some(MessageErrorKind::ContextLengthExceeded),
+        "tail: {last:?}"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn context_length_error_triggers_compaction_recovery() -> Result<()> {
     use goose_providers::errors::ProviderError;
     use std::sync::atomic::{AtomicUsize, Ordering};
