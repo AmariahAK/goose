@@ -2,13 +2,23 @@ const MODEL_MAX_TOKENS: usize = 512;
 
 const SPECIAL_TOKEN_HEADROOM: usize = 12;
 
+// Window size in BYTES, used as a worst-case proxy for tokens: the classifier's
+// tokenizer never emits more than one token per byte, so a window of at most this
+// many bytes cannot exceed MODEL_MAX_TOKENS. Changing the model/tokenizer to one
+// that can produce >1 token/byte would break this bound.
 const MAX_WINDOW_CHARS: usize = MODEL_MAX_TOKENS - SPECIAL_TOKEN_HEADROOM;
 
 const OVERLAP_CHARS: usize = 256;
 
+pub const MAX_WINDOWS: usize = 12;
+
 pub fn chunk_command(text: &str) -> Vec<String> {
     let overlap_ratio = OVERLAP_CHARS as f32 / MAX_WINDOW_CHARS as f32;
     chunk_with_params(text, MAX_WINDOW_CHARS, overlap_ratio)
+}
+
+pub fn exceeds_window_cap(text: &str) -> bool {
+    chunk_command(text).len() > MAX_WINDOWS
 }
 
 #[allow(clippy::string_slice)]
@@ -22,19 +32,22 @@ fn chunk_with_params(text: &str, max_chars: usize, overlap_ratio: f32) -> Vec<St
 
     let overlap = ((max_chars as f32) * overlap_ratio) as usize;
     let stride = max_chars.saturating_sub(overlap).max(1);
+    debug_assert!(stride > 0, "stride must be positive to make progress");
 
     let mut chunks = Vec::new();
     let mut start = 0;
     while start < text.len() {
-        let hard_end = (start + max_chars).min(text.len());
-        let end = floor_char_boundary(text, hard_end);
         let real_start = floor_char_boundary(text, start);
+        let hard_end = (real_start + max_chars).min(text.len());
+        let end = floor_char_boundary(text, hard_end);
         chunks.push(text[real_start..end].to_string());
 
         if end >= text.len() {
             break;
         }
-        start = floor_char_boundary(text, start + stride).max(real_start + 1);
+        let next = floor_char_boundary(text, real_start + stride);
+        debug_assert!(next > real_start, "each window must advance past the last");
+        start = next;
     }
     chunks
 }
@@ -79,27 +92,26 @@ mod tests {
 
     #[test]
     fn full_text_is_covered() {
-        let text: String = (0..5000).map(|i| (b'a' + (i % 26) as u8) as char).collect();
+        let text: String = (0..3000u32).map(|i| format!("{i:05}")).collect();
         let chunks = chunk_with_params(&text, 300, 0.25);
-        let mut covered = vec![false; text.len()];
-        let mut pos = 0;
-        let max_chars = 300usize;
-        let overlap = 75usize;
-        let stride = max_chars - overlap;
-        let mut start = 0;
-        while start < text.len() {
-            let end = (start + max_chars).min(text.len());
-            for c in covered.iter_mut().take(end).skip(start) {
+
+        let bytes = text.as_bytes();
+        let mut covered = vec![false; bytes.len()];
+        for chunk in &chunks {
+            let cb = chunk.as_bytes();
+            let start = bytes
+                .windows(cb.len())
+                .position(|w| w == cb)
+                .expect("each chunk is a substring of the input");
+            for c in covered.iter_mut().skip(start).take(cb.len()) {
                 *c = true;
             }
-            if end >= text.len() {
-                break;
-            }
-            start += stride;
-            pos += 1;
         }
-        assert!(covered.iter().all(|&c| c), "every byte must be covered");
-        assert!(pos + 1 >= chunks.len().saturating_sub(1));
+
+        assert!(
+            covered.iter().all(|&c| c),
+            "every byte of the input must be covered by some window"
+        );
     }
 
     #[test]
@@ -143,16 +155,17 @@ mod tests {
     }
 
     #[test]
-    fn window_never_exceeds_token_budget() {
+    fn window_never_exceeds_char_budget() {
         let text: String = (0..10_000)
             .map(|i| (b'a' + (i % 26) as u8) as char)
             .collect();
         let chunks = chunk_command(&text);
         for c in &chunks {
             assert!(
-                c.chars().count() <= MODEL_MAX_TOKENS,
-                "window has {} chars, exceeds token budget",
-                c.chars().count()
+                c.len() <= MAX_WINDOW_CHARS,
+                "window has {} bytes, exceeds worst-case token budget of {}",
+                c.len(),
+                MAX_WINDOW_CHARS
             );
         }
     }

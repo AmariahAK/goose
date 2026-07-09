@@ -238,10 +238,26 @@ impl ClassificationClient {
     }
 
     pub async fn classify_chunked(&self, text: &str) -> ChunkedScan {
-        use crate::security::command_chunker::chunk_command;
+        use crate::security::command_chunker::{chunk_command, MAX_WINDOWS};
 
-        let chunks = chunk_command(text);
+        const COMMAND_SCAN_CONCURRENCY: usize = 3;
+
+        let mut chunks = chunk_command(text);
         let chunk_count = chunks.len();
+
+        let mut unscanned = 0usize;
+        if chunk_count > MAX_WINDOWS {
+            unscanned = chunk_count - MAX_WINDOWS;
+            chunks.truncate(MAX_WINDOWS);
+            tracing::warn!(
+                monotonic_counter.goose.command_classifier_oversized = 1,
+                security.event_type = "command_classifier_chunking",
+                security.threat_type = "command_injection",
+                scanner.chunk_count = chunk_count,
+                scanner.window_cap = MAX_WINDOWS,
+                "command exceeds window cap; scanning capped windows and treating remainder as unscanned"
+            );
+        }
 
         if chunk_count == 1 {
             return match self.classify(text).await {
@@ -275,7 +291,7 @@ impl ClassificationClient {
 
         let results: Vec<Result<f32>> = stream::iter(chunks)
             .map(|chunk| async move { self.classify(&chunk).await })
-            .buffer_unordered(3)
+            .buffer_unordered(COMMAND_SCAN_CONCURRENCY)
             .collect()
             .await;
 
@@ -298,7 +314,7 @@ impl ClassificationClient {
                 }
             }
         }
-        let failed = total - succeeded;
+        let failed = (total - succeeded) + unscanned;
 
         if failed > 0 {
             tracing::warn!(
@@ -369,6 +385,22 @@ mod tests {
             None,
         )
         .expect("client construction should succeed")
+    }
+
+    #[tokio::test]
+    async fn classify_chunked_marks_oversized_commands_incomplete() {
+        use crate::security::command_chunker::exceeds_window_cap;
+        let client = unroutable_client();
+        let huge = "a; ".repeat(4000);
+        assert!(exceeds_window_cap(&huge), "test input must exceed the cap");
+
+        let scan = client.classify_chunked(&huge).await;
+
+        assert!(
+            scan.had_failures(),
+            "an oversized command must be reported as incomplete, not a clean pass"
+        );
+        assert!(scan.failed >= 1);
     }
 
     #[tokio::test]
