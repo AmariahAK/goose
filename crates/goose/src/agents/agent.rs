@@ -68,7 +68,7 @@ use tracing::{debug, error, info, instrument, warn};
 
 pub(crate) const DEFAULT_MAX_TURNS: u32 = 1000;
 const DEFAULT_STOP_HOOK_BLOCK_CAP: u32 = 8;
-const COMPACTION_THINKING_TEXT: &str = "goose is compacting the conversation...";
+const COMPACTION_PROGRESS_TEXT: &str = "goose is compacting the conversation...";
 const MAX_TURNS_MESSAGE: &str = "I've reached the maximum number of actions I can do without user input. Would you like me to continue?";
 const DEFAULT_FRONTEND_INSTRUCTIONS: &str = "The following tools are provided directly by the frontend and will be executed by the frontend when called.";
 
@@ -265,19 +265,26 @@ pub struct Agent {
 pub enum AgentEvent {
     Message(Message),
     Usage(crate::providers::base::ProviderUsage),
+    MessageUsage {
+        message_id: Option<String>,
+        usage: MessageUsage,
+    },
     McpNotification((String, ServerNotification)),
     HistoryReplaced(Conversation),
 }
 
-fn attach_turn_usage(messages: &mut Conversation, usage: &ProviderUsage) {
-    if let Some(message) = messages
+fn attach_turn_usage(
+    messages: &mut Conversation,
+    usage: &ProviderUsage,
+) -> Option<(Option<String>, MessageUsage)> {
+    let message = messages
         .messages_mut()
         .iter_mut()
         .rev()
-        .find(|m| m.role == rmcp::model::Role::Assistant)
-    {
-        message.metadata.usage = Some(Box::new(MessageUsage::from_provider_usage(usage, false)));
-    }
+        .find(|m| m.role == rmcp::model::Role::Assistant)?;
+    let message_usage = MessageUsage::from_provider_usage(usage, false);
+    message.metadata.usage = Some(Box::new(message_usage.clone()));
+    Some((message.id.clone(), message_usage))
 }
 
 impl Default for Agent {
@@ -1768,8 +1775,8 @@ impl Agent {
 
                 yield AgentEvent::Message(
                     Message::assistant().with_system_notification(
-                        SystemNotificationType::ThinkingMessage,
-                        COMPACTION_THINKING_TEXT,
+                        SystemNotificationType::ProgressMessage,
+                        COMPACTION_PROGRESS_TEXT,
                     )
                 );
 
@@ -2059,6 +2066,17 @@ impl Agent {
                             }
 
                             if let Some(response) = response {
+                                if !response.content.is_empty()
+                                    && response
+                                    .content
+                                    .iter()
+                                    .all(|content| matches!(content, MessageContent::SystemNotification(_)))
+                                {
+                                    yield AgentEvent::Message(response);
+                                    tokio::task::yield_now().await;
+                                    continue;
+                                }
+
                                 let ToolCategorizeResult {
                                     frontend_requests,
                                     remaining_requests,
@@ -2279,9 +2297,16 @@ impl Agent {
                                     }
                                 }
 
-                                // Preserve thinking/reasoning content from the original response.
-                                // Gemini (and other thinking models) require thinking to be echoed back.
-                                // Kimi/DeepSeek require reasoning_content on assistant tool call messages.
+                                // Thinking/reasoning belongs on the tool-call messages, not also
+                                // as a separate standalone message: Gemini and Kimi/DeepSeek
+                                // require it echoed on each assistant tool-call message, and the
+                                // provider formatters reconstruct per-provider shape from there.
+                                // Storing it both standalone AND on the tool-call message
+                                // duplicates it; once merge_consecutive_messages glues the adjacent
+                                // standalone and tool-call messages together, the duplicate signed
+                                // blocks make Anthropic reject the turn with a 400. So the thinking
+                                // is carried onto the split request messages below and never kept
+                                // as a redundant standalone message.
                                 let direct_thinking: Vec<MessageContent> = response
                                     .content
                                     .iter()
@@ -2294,36 +2319,25 @@ impl Agent {
                                     })
                                     .cloned()
                                     .collect();
-                                if !direct_thinking.is_empty() {
-                                    let thinking_msg = Message::new(
-                                        response.role.clone(),
-                                        response.created,
-                                        direct_thinking.clone(),
-                                    )
-                                    .with_id(format!("msg_{}", Uuid::new_v4()));
-                                    messages_to_add.push(thinking_msg);
-                                }
-                                // When thinking arrived in an earlier stream chunk (stored as a
-                                // thinking-only message) and this chunk has only tool calls,
-                                // reuse that thinking so each split request_msg carries it.
+                                // When thinking arrived in an earlier stream chunk it was stored as
+                                // a standalone thinking-only message; reuse that thinking on the
+                                // tool-call messages and drop the standalone so it isn't duplicated.
                                 let response_thinking = if direct_thinking.is_empty() {
-                                    messages_to_add
-                                        .messages()
-                                        .iter()
-                                        .rev()
-                                        .find(|m| {
-                                            m.role == response.role
-                                                && !m.content.is_empty()
-                                                && m.content.iter().all(|c| {
-                                                    matches!(
-                                                        c,
-                                                        MessageContent::Thinking(_)
-                                                            | MessageContent::RedactedThinking(_)
-                                                    )
-                                                })
-                                        })
-                                        .map(|m| m.content.clone())
-                                        .unwrap_or_default()
+                                    let prior = messages_to_add.messages().iter().rposition(|m| {
+                                        m.role == response.role
+                                            && !m.content.is_empty()
+                                            && m.content.iter().all(|c| {
+                                                matches!(
+                                                    c,
+                                                    MessageContent::Thinking(_)
+                                                        | MessageContent::RedactedThinking(_)
+                                                )
+                                            })
+                                    });
+                                    match prior {
+                                        Some(idx) => messages_to_add.remove(idx).content,
+                                        None => Vec::new(),
+                                    }
                                 } else {
                                     direct_thinking
                                 };
@@ -2426,8 +2440,8 @@ impl Agent {
                             );
                             yield AgentEvent::Message(
                                 Message::assistant().with_system_notification(
-                                    SystemNotificationType::ThinkingMessage,
-                                    COMPACTION_THINKING_TEXT,
+                                    SystemNotificationType::ProgressMessage,
+                                    COMPACTION_PROGRESS_TEXT,
                                 )
                             );
 
@@ -2686,7 +2700,11 @@ impl Agent {
                 };
 
                 if let Some(usage) = pending_turn_usage.take() {
-                    attach_turn_usage(&mut messages_to_add, &usage);
+                    if let Some((message_id, usage)) =
+                        attach_turn_usage(&mut messages_to_add, &usage)
+                    {
+                        yield AgentEvent::MessageUsage { message_id, usage };
+                    }
                 }
 
                 for msg in &messages_to_add {
@@ -2881,7 +2899,7 @@ impl Agent {
             .or_else(|| config.get_goose_provider().ok())
             .ok_or_else(|| anyhow!("Could not configure agent: missing provider"))?;
 
-        let model_config = match session.model_config.clone() {
+        let mut model_config = match session.model_config.clone() {
             Some(saved_config) => saved_config,
             None => {
                 let model_name = config
@@ -2892,6 +2910,20 @@ impl Agent {
                     .map_err(|e| anyhow!("Could not configure agent: invalid model {}", e))?
             }
         };
+
+        // if the saved model is the ACP sentinel "current", only preserve this if the provider
+        // uses this sentinel to indicate it's an ACP provider that manages its model
+        if model_config.model_name == crate::acp::ACP_CURRENT_MODEL {
+            if let Ok(entry) = crate::providers::get_from_registry(&provider_name).await {
+                if entry.metadata().default_model != crate::acp::ACP_CURRENT_MODEL {
+                    model_config = crate::model_config::model_config_from_user_config(
+                        &provider_name,
+                        &entry.metadata().default_model,
+                    )
+                    .map_err(|e| anyhow!("Could not resolve default model: {}", e))?;
+                }
+            }
+        }
 
         let extensions =
             EnabledExtensionsState::extensions_or_default(Some(&session.extension_data), config);
@@ -3775,7 +3807,8 @@ echo start >> "$PLUGIN_ROOT/hook.log"
                 AgentEvent::Message(message) => messages.push(message),
                 AgentEvent::McpNotification(_)
                 | AgentEvent::HistoryReplaced(_)
-                | AgentEvent::Usage(_) => {}
+                | AgentEvent::Usage(_)
+                | AgentEvent::MessageUsage { .. } => {}
             }
         }
         Ok(messages)
@@ -4010,5 +4043,51 @@ echo start >> "$PLUGIN_ROOT/hook.log"
         assert!(extract_string_arg(&input, &["path"]).is_none());
         let input = serde_json::json!({ "path": "" });
         assert!(extract_string_arg(&input, &["path"]).is_none());
+    }
+
+    #[test]
+    fn attach_turn_usage_targets_last_assistant_message() {
+        let usage = ProviderUsage::new(
+            "test-model".to_string(),
+            Usage::new(Some(1200), Some(340), None),
+        );
+        let mut conversation = Conversation::new_unvalidated([
+            Message::user().with_text("hi"),
+            Message::assistant().with_id("a1").with_text("first"),
+            Message::user().with_text("again"),
+            Message::assistant().with_id("a2").with_text("second"),
+        ]);
+
+        let (message_id, attached) =
+            attach_turn_usage(&mut conversation, &usage).expect("usage should attach");
+
+        assert_eq!(message_id.as_deref(), Some("a2"));
+        assert_eq!(attached.input_tokens, Some(1200));
+        assert_eq!(attached.output_tokens, Some(340));
+        assert!(!attached.is_compaction, "turn usage is not a compaction");
+
+        let messages = conversation.messages();
+        let stored = messages[3]
+            .metadata
+            .usage
+            .as_deref()
+            .expect("usage must be stored on the last assistant message");
+        assert_eq!(*stored, attached);
+        assert!(
+            messages[1].metadata.usage.is_none(),
+            "earlier assistant message must not receive the usage"
+        );
+    }
+
+    #[test]
+    fn attach_turn_usage_returns_none_without_assistant_message() {
+        let usage = ProviderUsage::new("test-model".to_string(), Usage::default());
+        let mut conversation = Conversation::new_unvalidated([Message::user().with_text("hi")]);
+
+        assert!(attach_turn_usage(&mut conversation, &usage).is_none());
+        assert!(
+            conversation.messages()[0].metadata.usage.is_none(),
+            "user message must stay untouched"
+        );
     }
 }
