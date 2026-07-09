@@ -4,10 +4,11 @@ const SPECIAL_TOKEN_HEADROOM: usize = 12;
 
 const MAX_WINDOW_CHARS: usize = MODEL_MAX_TOKENS - SPECIAL_TOKEN_HEADROOM;
 
-const OVERLAP_RATIO: f32 = 0.25;
+const OVERLAP_CHARS: usize = 256;
 
 pub fn chunk_command(text: &str) -> Vec<String> {
-    chunk_with_params(text, MAX_WINDOW_CHARS, OVERLAP_RATIO)
+    let overlap_ratio = OVERLAP_CHARS as f32 / MAX_WINDOW_CHARS as f32;
+    chunk_with_params(text, MAX_WINDOW_CHARS, overlap_ratio)
 }
 
 #[allow(clippy::string_slice)]

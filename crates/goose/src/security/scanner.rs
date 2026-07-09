@@ -1,6 +1,6 @@
 use crate::config::Config;
 use crate::conversation::message::Message;
-use crate::security::classification_client::ClassificationClient;
+use crate::security::classification_client::{ChunkedScan, ClassificationClient};
 use crate::security::patterns::{PatternMatch, PatternMatcher};
 use crate::utils::safe_truncate;
 use anyhow::Result;
@@ -199,14 +199,14 @@ impl PromptInjectionScanner {
 
     async fn analyze_text(&self, text: &str) -> Result<DetailedScanResult> {
         if let Some(classifier) = self.command_classifier.as_ref() {
-            if let Some(ml_confidence) = self
-                .scan_with_classifier(text, classifier, ClassifierType::Command)
-                .await
-            {
+            let scan = classifier.classify_chunked(text).await;
+            let threshold = self.get_threshold_from_config();
+
+            if chunked_scan_is_trustworthy(&scan, threshold) {
                 return Ok(DetailedScanResult {
-                    confidence: ml_confidence,
+                    confidence: scan.max_confidence,
                     pattern_matches: Vec::new(),
-                    ml_confidence: Some(ml_confidence),
+                    ml_confidence: Some(scan.max_confidence),
                     used_pattern_detection: false,
                 });
             }
@@ -295,12 +295,7 @@ impl PromptInjectionScanner {
             ClassifierType::Prompt => "prompt injection",
         };
 
-        let result = match classifier_type {
-            ClassifierType::Command => classifier.classify_chunked(text).await,
-            ClassifierType::Prompt => classifier.classify(text).await,
-        };
-
-        match result {
+        match classifier.classify(text).await {
             Ok(conf) => Some(conf),
             Err(e) => {
                 tracing::warn!("{} classifier scan failed: {:#}", type_name, e);
@@ -396,6 +391,12 @@ impl PromptInjectionScanner {
     }
 }
 
+fn chunked_scan_is_trustworthy(scan: &ChunkedScan, threshold: f32) -> bool {
+    let detected = scan.succeeded > 0 && scan.max_confidence >= threshold;
+    let clean_and_complete = !scan.had_failures() && !scan.all_failed();
+    detected || clean_and_complete
+}
+
 fn is_shell_tool_name(name: &str) -> bool {
     matches!(name, "shell")
 }
@@ -409,6 +410,46 @@ impl Default for PromptInjectionScanner {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn detection_survives_a_failed_window() {
+        let scan = ChunkedScan {
+            max_confidence: 0.99,
+            succeeded: 2,
+            failed: 1,
+        };
+        assert!(chunked_scan_is_trustworthy(&scan, 0.8));
+    }
+
+    #[test]
+    fn clean_result_with_a_failed_window_is_not_trusted() {
+        let scan = ChunkedScan {
+            max_confidence: 0.1,
+            succeeded: 2,
+            failed: 1,
+        };
+        assert!(!chunked_scan_is_trustworthy(&scan, 0.8));
+    }
+
+    #[test]
+    fn clean_result_with_no_failures_is_trusted() {
+        let scan = ChunkedScan {
+            max_confidence: 0.1,
+            succeeded: 3,
+            failed: 0,
+        };
+        assert!(chunked_scan_is_trustworthy(&scan, 0.8));
+    }
+
+    #[test]
+    fn all_windows_failed_is_not_trusted() {
+        let scan = ChunkedScan {
+            max_confidence: 0.0,
+            succeeded: 0,
+            failed: 3,
+        };
+        assert!(!chunked_scan_is_trustworthy(&scan, 0.8));
+    }
     use rmcp::object;
 
     #[tokio::test]
