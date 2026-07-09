@@ -8,6 +8,7 @@ use crate::agents::execute_commands::{
 use crate::agents::state_machine::operation::{Emitter, Operation, OperationResult, TurnEffect};
 use crate::agents::{Agent, AgentEvent};
 use crate::conversation::message::Message;
+use crate::conversation::Conversation;
 use crate::session::Session;
 
 pub struct SlashCommandOperation<'a> {
@@ -26,11 +27,14 @@ impl Operation for SlashCommandOperation<'_> {
         "slash_command"
     }
 
-    async fn run(&self, session: &Session, emit: Emitter) -> Result<OperationResult> {
-        let Some(user_message) = session
-            .conversation
-            .as_ref()
-            .and_then(|c| c.last())
+    async fn run(
+        &self,
+        session: &Session,
+        conversation: &Conversation,
+        emit: Emitter,
+    ) -> Result<OperationResult> {
+        let Some(user_message) = conversation
+            .last()
             .filter(|message| {
                 message.role == Role::User
                     && message.is_agent_visible()

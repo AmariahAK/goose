@@ -15,7 +15,12 @@ use crate::session::Session;
 pub trait Operation: Send + Sync {
     fn name(&self) -> &'static str;
 
-    async fn run(&self, session: &Session, emit: Emitter) -> Result<OperationResult>;
+    async fn run(
+        &self,
+        session: &Session,
+        conversation: &Conversation,
+        emit: Emitter,
+    ) -> Result<OperationResult>;
 }
 
 pub type TurnOutcome = Vec<TurnEffect>;

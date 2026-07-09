@@ -53,14 +53,15 @@ impl Operation for LlmOperation {
         "llm"
     }
 
-    async fn run(&self, session: &Session, emit: Emitter) -> Result<OperationResult> {
-        let conversation = session
-            .conversation
-            .as_ref()
-            .filter(|c| matches!(c.last().map(|m| &m.role), Some(Role::User)));
-        let Some(conversation) = conversation else {
+    async fn run(
+        &self,
+        _session: &Session,
+        conversation: &Conversation,
+        emit: Emitter,
+    ) -> Result<OperationResult> {
+        if conversation.last().and_then(|m| m.error_kind()).is_some() {
             return Ok(OperationResult::NotApplicable(emit));
-        };
+        }
 
         let messages_for_provider: Vec<_> = conversation
             .messages()
@@ -69,11 +70,17 @@ impl Operation for LlmOperation {
             .map(|m| m.agent_visible_content())
             .collect();
 
+        if !matches!(
+            messages_for_provider.last().map(|m| &m.role),
+            Some(Role::User)
+        ) {
+            return Ok(OperationResult::NotApplicable(emit));
+        }
+
         let stream = self
             .provider
             .stream(
                 &self.model_config,
-                &session.id,
                 &self.system_prompt,
                 &messages_for_provider,
                 &self.tools,

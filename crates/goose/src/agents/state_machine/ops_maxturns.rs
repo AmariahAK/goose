@@ -5,6 +5,7 @@ use rmcp::model::Role;
 use crate::agents::state_machine::operation::{Emitter, Operation, OperationResult, TurnEffect};
 use crate::agents::AgentEvent;
 use crate::conversation::message::Message;
+use crate::conversation::Conversation;
 use crate::session::Session;
 
 /// Stops the loop once the agent has taken `max_turns` LLM turns in response to
@@ -20,10 +21,7 @@ impl MaxTurnsOperation {
     }
 }
 
-fn turns_taken_this_request(session: &Session) -> u32 {
-    let Some(conversation) = session.conversation.as_ref() else {
-        return 0;
-    };
+fn turns_taken_this_request(conversation: &Conversation) -> u32 {
     let mut turns = 0u32;
     for message in conversation.messages().iter().rev() {
         if message.role == Role::User && !message.is_tool_response() {
@@ -42,8 +40,13 @@ impl Operation for MaxTurnsOperation {
         "max_turns"
     }
 
-    async fn run(&self, session: &Session, emit: Emitter) -> Result<OperationResult> {
-        if turns_taken_this_request(session) < self.max_turns {
+    async fn run(
+        &self,
+        _session: &Session,
+        conversation: &Conversation,
+        emit: Emitter,
+    ) -> Result<OperationResult> {
+        if turns_taken_this_request(conversation) < self.max_turns {
             return Ok(OperationResult::NotApplicable(emit));
         }
 

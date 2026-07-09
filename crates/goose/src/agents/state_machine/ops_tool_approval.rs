@@ -1,18 +1,18 @@
-use anyhow::{anyhow, Result};
+use std::collections::{HashMap, HashSet};
+
+use anyhow::Result;
 use async_trait::async_trait;
-use rmcp::model::Role;
 
 use crate::agents::state_machine::operation::{Emitter, Operation, OperationResult, TurnEffect};
 use crate::agents::{Agent, AgentEvent};
 use crate::config::permission::PermissionLevel;
-use crate::conversation::message::{Message, MessageContent, ToolRequest};
+use crate::conversation::message::{ActionRequiredData, Message, MessageContent, ToolRequest};
+use crate::conversation::Conversation;
 use crate::permission::Permission;
 use crate::session::Session;
 use crate::tool_inspection::{get_security_finding_id_from_results, InspectionAction};
 
-pub const TOOL_APPROVAL_KEY: &str = "goose.approval";
-pub const TOOL_APPROVAL_ALLOWED: &str = "allowed";
-pub const TOOL_APPROVAL_DENIED: &str = "denied";
+pub const TOOL_EXECUTABLE_KEY: &str = "goose.executable";
 
 pub struct ToolApprovalOperation<'a> {
     agent: &'a Agent,
@@ -30,162 +30,246 @@ impl Operation for ToolApprovalOperation<'_> {
         "tool_approval"
     }
 
-    async fn run(&self, session: &Session, emit: Emitter) -> Result<OperationResult> {
-        let Some(message) = session.conversation.as_ref().and_then(|c| c.last()) else {
-            return Ok(OperationResult::NotApplicable(emit));
-        };
-        if message.role != Role::Assistant {
-            return Ok(OperationResult::NotApplicable(emit));
-        }
-
-        let pending: Vec<ToolRequest> = message
-            .content
-            .iter()
-            .filter_map(|content| match content {
-                MessageContent::ToolRequest(request)
-                    if request.tool_call.is_ok() && approval_state(request).is_none() =>
-                {
-                    Some(request.clone())
-                }
-                _ => None,
-            })
-            .collect();
-        if pending.is_empty() {
-            return Ok(OperationResult::NotApplicable(emit));
-        }
-
-        let message_id = message
-            .id
-            .clone()
-            .ok_or_else(|| anyhow!("Persisted tool request message has no id"))?;
-        let conversation = session.conversation.as_ref().expect("checked above");
-        let goose_mode = self.agent.goose_mode().await;
-        let inspection_results = self
-            .agent
-            .tool_inspection_manager
-            .inspect_tools(&session.id, &pending, conversation.messages(), goose_mode)
-            .await?;
-        let permission_check_result = self
-            .agent
-            .tool_inspection_manager
-            .process_inspection_results_with_permission_inspector(&pending, &inspection_results)
-            .unwrap_or_else(
-                || crate::permission::permission_judge::PermissionCheckResult {
-                    approved: Vec::new(),
-                    needs_approval: pending.clone(),
-                    denied: Vec::new(),
-                },
-            );
-
+    async fn run(
+        &self,
+        session: &Session,
+        conversation: &Conversation,
+        emit: Emitter,
+    ) -> Result<OperationResult> {
+        let state = ApprovalState::from_messages(conversation.messages());
         let mut effects = Vec::new();
-        for request in permission_check_result.approved {
-            effects.push(mark_decision(
-                &message_id,
-                &request.id,
-                TOOL_APPROVAL_ALLOWED,
+
+        for pending in state.pending_responses() {
+            let executable = permission_allows(&pending.permission);
+            effects.push(mark_executable(
+                &pending.message_id,
+                &pending.tool_call_id,
+                executable,
             ));
-        }
-        for request in permission_check_result.denied {
-            effects.push(mark_decision(
-                &message_id,
-                &request.id,
-                TOOL_APPROVAL_DENIED,
-            ));
+
+            if let Some(tool_name) = pending.tool_name {
+                if pending.permission == Permission::AlwaysAllow {
+                    self.agent
+                        .tool_inspection_manager
+                        .update_permission_manager(&tool_name, PermissionLevel::AlwaysAllow)
+                        .await;
+                } else if pending.permission == Permission::AlwaysDeny {
+                    self.agent
+                        .tool_inspection_manager
+                        .update_permission_manager(&tool_name, PermissionLevel::NeverAllow)
+                        .await;
+                }
+            }
         }
 
-        for request in permission_check_result.needs_approval {
-            let tool_call = request.tool_call.clone()?;
-            let security_message = inspection_results
-                .iter()
-                .find(|result| result.tool_request_id == request.id)
-                .and_then(|result| match &result.action {
-                    InspectionAction::RequireApproval(Some(message)) => Some(message.clone()),
-                    _ => None,
-                });
-
-            let confirmation_rx = self
+        let pending_requests = state.pending_requests();
+        if !pending_requests.is_empty() {
+            let goose_mode = self.agent.goose_mode().await;
+            let inspection_results = self
                 .agent
-                .tool_confirmation_router
-                .register(request.id.clone())
-                .await;
-
-            let action_required = Message::assistant()
-                .with_action_required(
-                    request.id.clone(),
-                    tool_call.name.to_string(),
-                    tool_call.arguments.clone().unwrap_or_default(),
-                    security_message,
+                .tool_inspection_manager
+                .inspect_tools(
+                    &session.id,
+                    &pending_requests,
+                    conversation.messages(),
+                    goose_mode,
                 )
-                .user_only();
-            emit.emit(AgentEvent::Message(action_required)).await;
-
-            let confirmation = confirmation_rx
-                .await
-                .map_err(|_| anyhow!("Confirmation channel closed for request {}", request.id))?;
-
-            if let Some(finding_id) =
-                get_security_finding_id_from_results(&request.id, &inspection_results)
-            {
-                let action = match confirmation.permission {
-                    Permission::AllowOnce | Permission::AlwaysAllow => "ALLOW",
-                    _ => "BLOCK",
-                };
-                tracing::info!(
-                    monotonic_counter.goose.prompt_injection_user_decisions = 1,
-                    security.event_type = "user_decision",
-                    security.action = action,
-                    security.finding_id = %finding_id,
-                    tool.request_id = %request.id,
-                    user.decision = ?confirmation.permission,
-                    "security finding: user decision"
+                .await?;
+            let permission_check_result = self
+                .agent
+                .tool_inspection_manager
+                .process_inspection_results_with_permission_inspector(
+                    &pending_requests,
+                    &inspection_results,
+                )
+                .unwrap_or_else(
+                    || crate::permission::permission_judge::PermissionCheckResult {
+                        approved: Vec::new(),
+                        needs_approval: Vec::new(),
+                        denied: Vec::new(),
+                    },
                 );
+
+            for request in permission_check_result.denied {
+                if let Some(message_id) = state.tool_message_id(&request.id) {
+                    effects.push(mark_executable(message_id, &request.id, false));
+                }
             }
 
-            if confirmation.permission == Permission::AllowOnce
-                || confirmation.permission == Permission::AlwaysAllow
-            {
-                effects.push(mark_decision(
-                    &message_id,
-                    &request.id,
-                    TOOL_APPROVAL_ALLOWED,
-                ));
-                if confirmation.permission == Permission::AlwaysAllow {
-                    self.agent
-                        .tool_inspection_manager
-                        .update_permission_manager(&tool_call.name, PermissionLevel::AlwaysAllow)
-                        .await;
-                }
-            } else {
-                effects.push(mark_decision(
-                    &message_id,
-                    &request.id,
-                    TOOL_APPROVAL_DENIED,
-                ));
-                if confirmation.permission == Permission::AlwaysDeny {
-                    self.agent
-                        .tool_inspection_manager
-                        .update_permission_manager(&tool_call.name, PermissionLevel::NeverAllow)
-                        .await;
+            for request in permission_check_result.needs_approval {
+                let tool_call = request.tool_call.clone()?;
+                let Some(message_id) = state.tool_message_id(&request.id) else {
+                    continue;
+                };
+                effects.push(mark_executable(message_id, &request.id, false));
+
+                let security_message = inspection_results
+                    .iter()
+                    .find(|result| result.tool_request_id == request.id)
+                    .and_then(|result| match &result.action {
+                        InspectionAction::RequireApproval(Some(message)) => Some(message.clone()),
+                        _ => None,
+                    });
+
+                let action_required = Message::assistant()
+                    .with_action_required(
+                        request.id.clone(),
+                        tool_call.name.to_string(),
+                        tool_call.arguments.clone().unwrap_or_default(),
+                        security_message,
+                    )
+                    .user_only()
+                    .with_generated_id();
+                emit.emit(AgentEvent::Message(action_required.clone()))
+                    .await;
+                effects.push(action_required.into());
+
+                if let Some(finding_id) =
+                    get_security_finding_id_from_results(&request.id, &inspection_results)
+                {
+                    tracing::info!(
+                        monotonic_counter.goose.prompt_injection_user_decisions = 1,
+                        security.event_type = "approval_request",
+                        security.finding_id = %finding_id,
+                        tool.request_id = %request.id,
+                        "security finding: approval requested"
+                    );
                 }
             }
         }
 
-        Ok(OperationResult::Applied(effects))
+        if effects.is_empty() {
+            Ok(OperationResult::NotApplicable(emit))
+        } else {
+            Ok(OperationResult::Applied(effects))
+        }
     }
 }
 
-fn approval_state(request: &ToolRequest) -> Option<&str> {
+struct PendingResponse {
+    message_id: String,
+    tool_call_id: String,
+    tool_name: Option<String>,
+    permission: Permission,
+}
+
+struct ApprovalState {
+    answered: HashSet<String>,
+    approval_requests: HashSet<String>,
+    approval_responses: HashMap<String, Permission>,
+    tool_requests: Vec<(String, ToolRequest)>,
+}
+
+impl ApprovalState {
+    fn from_messages(messages: &[Message]) -> Self {
+        let mut answered = HashSet::new();
+        let mut approval_requests = HashSet::new();
+        let mut approval_responses = HashMap::new();
+        let mut tool_requests = Vec::new();
+
+        for message in messages {
+            for content in &message.content {
+                match content {
+                    MessageContent::ToolResponse(response) => {
+                        answered.insert(response.id.clone());
+                    }
+                    MessageContent::ToolRequest(request) => {
+                        if let Some(message_id) = &message.id {
+                            tool_requests.push((message_id.clone(), request.clone()));
+                        }
+                    }
+                    MessageContent::ActionRequired(action) => match &action.data {
+                        ActionRequiredData::ToolConfirmation { id, .. } => {
+                            approval_requests.insert(id.clone());
+                        }
+                        ActionRequiredData::ToolConfirmationResponse { id, permission } => {
+                            approval_responses.insert(id.clone(), permission.clone());
+                        }
+                        _ => {}
+                    },
+                    _ => {}
+                }
+            }
+        }
+
+        Self {
+            answered,
+            approval_requests,
+            approval_responses,
+            tool_requests,
+        }
+    }
+
+    fn pending_responses(&self) -> Vec<PendingResponse> {
+        self.tool_requests
+            .iter()
+            .filter_map(|(message_id, request)| {
+                if self.answered.contains(&request.id) {
+                    return None;
+                }
+                let permission = self.approval_responses.get(&request.id)?.clone();
+                if request_executable(request) == Some(permission_allows(&permission)) {
+                    return None;
+                }
+                let tool_name = request
+                    .tool_call
+                    .as_ref()
+                    .ok()
+                    .map(|tool_call| tool_call.name.to_string());
+                Some(PendingResponse {
+                    message_id: message_id.clone(),
+                    tool_call_id: request.id.clone(),
+                    tool_name,
+                    permission,
+                })
+            })
+            .collect()
+    }
+
+    fn pending_requests(&self) -> Vec<ToolRequest> {
+        self.tool_requests
+            .iter()
+            .filter_map(|(_, request)| {
+                if self.answered.contains(&request.id)
+                    || self.approval_requests.contains(&request.id)
+                    || self.approval_responses.contains_key(&request.id)
+                    || request_executable(request) == Some(false)
+                    || request.tool_call.is_err()
+                {
+                    return None;
+                }
+                Some(request.clone())
+            })
+            .collect()
+    }
+
+    fn tool_message_id(&self, tool_call_id: &str) -> Option<&str> {
+        self.tool_requests
+            .iter()
+            .find(|(_, request)| request.id == tool_call_id)
+            .map(|(message_id, _)| message_id.as_str())
+    }
+}
+
+pub fn request_executable(request: &ToolRequest) -> Option<bool> {
     request
         .tool_meta
         .as_ref()
-        .and_then(|meta| meta.get(TOOL_APPROVAL_KEY))
-        .and_then(|value| value.as_str())
+        .and_then(|meta| meta.get(TOOL_EXECUTABLE_KEY))
+        .and_then(|value| value.as_bool())
 }
 
-fn mark_decision(message_id: &str, tool_call_id: &str, decision: &str) -> TurnEffect {
+fn permission_allows(permission: &Permission) -> bool {
+    matches!(permission, Permission::AllowOnce | Permission::AlwaysAllow)
+}
+
+fn mark_executable(message_id: &str, tool_call_id: &str, executable: bool) -> TurnEffect {
+    if message_id.is_empty() {
+        panic!("tool request message id is required");
+    }
     TurnEffect::PatchToolRequestMeta {
         message_id: message_id.to_string(),
         tool_call_id: tool_call_id.to_string(),
-        patch: serde_json::json!({ TOOL_APPROVAL_KEY: decision }),
+        patch: serde_json::json!({ TOOL_EXECUTABLE_KEY: executable }),
     }
 }

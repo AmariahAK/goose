@@ -177,6 +177,69 @@ fn replay_conversation_to_client(
 }
 
 impl GooseAcpAgent {
+    fn resend_pending_tool_permissions(
+        &self,
+        cx: &ConnectionTo<Client>,
+        agent: &Arc<Agent>,
+        session: &Session,
+    ) -> Result<(), agent_client_protocol::Error> {
+        let session_id = SessionId::new(session.id.clone());
+        let messages = session
+            .conversation
+            .as_ref()
+            .map(|c| c.messages().as_slice())
+            .unwrap_or(&[]);
+
+        let mut answered = HashSet::new();
+        let mut responses = HashSet::new();
+        let mut requests = Vec::new();
+
+        for message in messages {
+            for content in &message.content {
+                match content {
+                    MessageContent::ToolResponse(response) => {
+                        answered.insert(response.id.clone());
+                    }
+                    MessageContent::ActionRequired(action) => match &action.data {
+                        ActionRequiredData::ToolConfirmation {
+                            id,
+                            tool_name,
+                            arguments,
+                            prompt,
+                        } => requests.push((
+                            id.clone(),
+                            tool_name.clone(),
+                            arguments.clone(),
+                            prompt.clone(),
+                        )),
+                        ActionRequiredData::ToolConfirmationResponse { id, .. } => {
+                            responses.insert(id.clone());
+                        }
+                        _ => {}
+                    },
+                    _ => {}
+                }
+            }
+        }
+
+        for (id, tool_name, arguments, prompt) in requests {
+            if answered.contains(&id) || responses.contains(&id) {
+                continue;
+            }
+            self.handle_tool_permission_request(
+                cx,
+                agent,
+                &session_id,
+                id,
+                tool_name,
+                arguments,
+                prompt,
+            )?;
+        }
+
+        Ok(())
+    }
+
     pub(super) async fn handle_load_session(
         &self,
         cx: &ConnectionTo<Client>,
@@ -211,6 +274,7 @@ impl GooseAcpAgent {
         self.apply_session_recipe(&agent, &session).await?;
         self.register_acp_session(session_id_str.clone(), agent.clone(), replay_tool_requests)
             .await;
+        self.resend_pending_tool_permissions(cx, &agent, &session)?;
 
         session = self
             .session_manager

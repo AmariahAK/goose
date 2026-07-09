@@ -217,6 +217,11 @@ pub enum ActionRequiredData {
         #[schema(value_type = String)]
         action: ElicitationAction,
     },
+    ToolConfirmationResponse {
+        id: String,
+        #[schema(value_type = String)]
+        permission: crate::permission::Permission,
+    },
 }
 
 fn default_elicitation_action() -> ElicitationAction {
@@ -346,6 +351,9 @@ impl fmt::Display for MessageContent {
                 }
                 ActionRequiredData::ElicitationResponse { id, .. } => {
                     write!(f, "[ActionRequired: ElicitationResponse for {}]", id)
+                }
+                ActionRequiredData::ToolConfirmationResponse { id, .. } => {
+                    write!(f, "[ActionRequired: ToolConfirmationResponse for {}]", id)
                 }
             },
             MessageContent::FrontendToolRequest(r) => match &r.tool_call {
@@ -530,6 +538,18 @@ impl MessageContent {
                 id: id.into(),
                 user_data,
                 action,
+            },
+        })
+    }
+
+    pub fn action_required_tool_confirmation_response<S: Into<String>>(
+        id: S,
+        permission: crate::permission::Permission,
+    ) -> Self {
+        MessageContent::ActionRequired(ActionRequired {
+            data: ActionRequiredData::ToolConfirmationResponse {
+                id: id.into(),
+                permission,
             },
         })
     }

@@ -26,8 +26,7 @@ use crate::conversation::message::{
 };
 use crate::execution::manager::{AgentManager, AgentManagerGetResult, RuntimeContext};
 use crate::mcp_utils::ToolResult;
-use crate::permission::permission_confirmation::PrincipalType;
-use crate::permission::{Permission, PermissionConfirmation};
+use crate::permission::Permission;
 use crate::providers::base::Provider;
 use crate::providers::inventory::{
     ProviderInventoryEntry, ProviderInventoryService, RefreshJobPlan, RefreshPlan,
@@ -49,9 +48,9 @@ use agent_client_protocol::schema::v1::{
     InitializeResponse, ListSessionsRequest, ListSessionsResponse, LoadSessionRequest,
     LoadSessionResponse, McpCapabilities, McpServer, Meta, NewSessionRequest, NewSessionResponse,
     PermissionOption, PermissionOptionKind, PromptCapabilities, PromptRequest, PromptResponse,
-    RequestPermissionOutcome, RequestPermissionRequest, ResourceLink, SessionCapabilities,
-    SessionCloseCapabilities, SessionConfigOption, SessionId, SessionInfoUpdate,
-    SessionListCapabilities, SessionNotification, SessionUpdate, SetSessionConfigOptionRequest,
+    RequestPermissionRequest, ResourceLink, SessionCapabilities, SessionCloseCapabilities,
+    SessionConfigOption, SessionId, SessionInfoUpdate, SessionListCapabilities,
+    SessionNotification, SessionUpdate, SetSessionConfigOptionRequest,
     SetSessionConfigOptionResponse, SetSessionModeRequest, SetSessionModeResponse, StopReason,
     TextContent, TextResourceContents, ToolCall, ToolCallContent, ToolCallId, ToolCallLocation,
     ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields, ToolKind, Usage, UsageUpdate,
@@ -210,6 +209,7 @@ pub struct GooseAcpAgentOptions {
     pub scheduler: Arc<dyn SchedulerTrait>,
 }
 
+#[derive(Clone)]
 pub struct GooseAcpAgent {
     sessions: Arc<Mutex<HashMap<String, GooseAcpSession>>>,
     active_prompt_runs: Arc<Mutex<HashMap<String, ActivePromptRun>>>,
@@ -1433,6 +1433,7 @@ impl GooseAcpAgent {
                     .await?;
                 }
                 ActionRequiredData::ElicitationResponse { .. } => {}
+                ActionRequiredData::ToolConfirmationResponse { .. } => {}
             },
             MessageContent::SystemNotification(notification) => {
                 send_status_message_update(
@@ -1917,6 +1918,7 @@ impl GooseAcpAgent {
         let cx = cx.clone();
         let agent = agent.clone();
         let session_id = session_id.clone();
+        let server = self.clone();
 
         let formatted_name = format_tool_name(&tool_name);
 
@@ -1948,35 +1950,123 @@ impl GooseAcpAgent {
         ];
 
         let permission_request =
-            RequestPermissionRequest::new(session_id, tool_call_update, options);
+            RequestPermissionRequest::new(session_id.clone(), tool_call_update, options);
 
         cx.send_request(permission_request)
             .on_receiving_result(move |result| async move {
-                match result {
-                    Ok(response) => {
-                        agent
-                            .handle_confirmation(
-                                request_id,
-                                outcome_to_confirmation(&response.outcome),
-                            )
-                            .await;
-                        Ok(())
-                    }
+                let permission = match result {
+                    Ok(response) => Permission::from(PermissionDecision::from(&response.outcome)),
                     Err(e) => {
                         error!(error = ?e, "permission request failed");
-                        agent
-                            .handle_confirmation(
-                                request_id,
-                                PermissionConfirmation {
-                                    principal_type: PrincipalType::Tool,
-                                    permission: Permission::Cancel,
-                                },
-                            )
-                            .await;
-                        Ok(())
+                        Permission::Cancel
+                    }
+                };
+                if let Err(e) = server
+                    .continue_after_tool_permission_response(
+                        cx, agent, session_id, request_id, permission,
+                    )
+                    .await
+                {
+                    error!(error = ?e, "failed to continue after permission response");
+                }
+                Ok(())
+            })?;
+
+        Ok(())
+    }
+
+    async fn continue_after_tool_permission_response(
+        &self,
+        cx: ConnectionTo<Client>,
+        agent: Arc<Agent>,
+        session_id: SessionId,
+        request_id: String,
+        permission: Permission,
+    ) -> Result<(), agent_client_protocol::Error> {
+        let session_id_str = session_id.0.to_string();
+        let message = Message::user()
+            .with_content(MessageContent::action_required_tool_confirmation_response(
+                request_id, permission,
+            ))
+            .with_visibility(false, false)
+            .with_generated_id();
+
+        let session_config = SessionConfig {
+            id: session_id_str.clone(),
+            schedule_id: None,
+            max_turns: None,
+            retry_config: None,
+        };
+        let mut stream = agent
+            .reply(message, session_config, None)
+            .await
+            .map_err(|e| {
+                agent_client_protocol::Error::internal_error()
+                    .data(format!("Error continuing after permission response: {e}"))
+            })?;
+
+        let mut chain_buffer: Vec<(String, String)> = Vec::new();
+        while let Some(event) = stream.next().await {
+            match event {
+                Ok(crate::agents::AgentEvent::Message(message)) => {
+                    let stored_message_id = message.id.clone();
+                    let mut sessions = self.sessions.lock().await;
+                    let Some(session) = sessions.get_mut(&session_id_str) else {
+                        return Err(agent_client_protocol::Error::invalid_params()
+                            .data(format!("Session not found: {}", session_id_str)));
+                    };
+
+                    for content_item in &message.content {
+                        match content_item {
+                            MessageContent::ToolRequest(tr) => {
+                                if let Some(msg_id) = stored_message_id.as_deref() {
+                                    chain_buffer.push((tr.id.clone(), msg_id.to_string()));
+                                    extend_chain_membership(
+                                        &chain_buffer,
+                                        &mut session.chain_membership,
+                                    );
+                                }
+                            }
+                            MessageContent::ToolResponse(_) => {}
+                            _ => chain_buffer.clear(),
+                        }
+
+                        self.handle_message_content(
+                            content_item,
+                            &session_id,
+                            &session_id_str,
+                            stored_message_id.as_deref(),
+                            message.created,
+                            &message.role,
+                            message.metadata.steer,
+                            &agent,
+                            session,
+                            &cx,
+                        )
+                        .await?;
                     }
                 }
-            })?;
+                Ok(crate::agents::AgentEvent::McpNotification((request_id, notification))) => {
+                    if let Some(update) =
+                        tool_notifications::tool_notification_update(request_id, notification)
+                    {
+                        cx.send_notification(SessionNotification::new(session_id.clone(), update))?;
+                    }
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    return Err(agent_client_protocol::Error::internal_error()
+                        .data(format!("Error in permission continuation stream: {}", e)));
+                }
+            }
+        }
+
+        {
+            let mut sessions = self.sessions.lock().await;
+            if let Some(session) = sessions.get_mut(&session_id_str) {
+                extend_chain_membership(&chain_buffer, &mut session.chain_membership);
+            }
+        }
 
         Ok(())
     }
@@ -2008,13 +2098,6 @@ fn extract_client_supports_recipe_param_requests(
     goose_client_capabilities
         .and_then(|goose| goose.recipe_parameter_requests)
         .unwrap_or(false)
-}
-
-fn outcome_to_confirmation(outcome: &RequestPermissionOutcome) -> PermissionConfirmation {
-    PermissionConfirmation {
-        principal_type: PrincipalType::Tool,
-        permission: Permission::from(PermissionDecision::from(outcome)),
-    }
 }
 
 fn prompt_error_from_message_content(
@@ -3211,7 +3294,7 @@ mod tests {
     use crate::session::session_manager::SessionType;
     use agent_client_protocol::schema::v1::{
         EnvVariable, HttpHeader, McpServer, McpServerHttp, McpServerSse, McpServerStdio,
-        PermissionOptionId, ResourceLink, SelectedPermissionOutcome,
+        PermissionOptionId, RequestPermissionOutcome, ResourceLink, SelectedPermissionOutcome,
     };
     use goose_providers::conversation::token_usage::Usage as TokenUsage;
     use rmcp::model::{CallToolRequestParams, Content as RmcpContent};
@@ -3570,39 +3653,36 @@ print(\"hello, world\")
 
     #[test_case(
         RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new(PermissionOptionId::from("allow_once".to_string()))),
-        PermissionConfirmation { principal_type: PrincipalType::Tool, permission: Permission::AllowOnce };
+        Permission::AllowOnce;
         "allow_once_maps_to_allow_once"
     )]
     #[test_case(
         RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new(PermissionOptionId::from("allow_always".to_string()))),
-        PermissionConfirmation { principal_type: PrincipalType::Tool, permission: Permission::AlwaysAllow };
+        Permission::AlwaysAllow;
         "allow_always_maps_to_always_allow"
     )]
     #[test_case(
         RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new(PermissionOptionId::from("reject_once".to_string()))),
-        PermissionConfirmation { principal_type: PrincipalType::Tool, permission: Permission::DenyOnce };
+        Permission::DenyOnce;
         "reject_once_maps_to_deny_once"
     )]
     #[test_case(
         RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new(PermissionOptionId::from("reject_always".to_string()))),
-        PermissionConfirmation { principal_type: PrincipalType::Tool, permission: Permission::AlwaysDeny };
+        Permission::AlwaysDeny;
         "reject_always_maps_to_always_deny"
     )]
     #[test_case(
         RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new(PermissionOptionId::from("unknown".to_string()))),
-        PermissionConfirmation { principal_type: PrincipalType::Tool, permission: Permission::Cancel };
+        Permission::Cancel;
         "unknown_option_maps_to_cancel"
     )]
     #[test_case(
         RequestPermissionOutcome::Cancelled,
-        PermissionConfirmation { principal_type: PrincipalType::Tool, permission: Permission::Cancel };
+        Permission::Cancel;
         "cancelled_maps_to_cancel"
     )]
-    fn test_outcome_to_confirmation(
-        input: RequestPermissionOutcome,
-        expected: PermissionConfirmation,
-    ) {
-        assert_eq!(outcome_to_confirmation(&input), expected);
+    fn test_permission_from_acp_outcome(input: RequestPermissionOutcome, expected: Permission) {
+        assert_eq!(Permission::from(PermissionDecision::from(&input)), expected);
     }
 
     fn json_object(pairs: Vec<(&str, serde_json::Value)>) -> rmcp::model::JsonObject {

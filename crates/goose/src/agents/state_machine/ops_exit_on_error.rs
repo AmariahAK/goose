@@ -2,6 +2,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 
 use crate::agents::state_machine::operation::{Emitter, Operation, OperationResult, TurnEffect};
+use crate::conversation::Conversation;
 use crate::session::Session;
 
 /// Terminal catch-all: if the conversation ends in a tagged error message that
@@ -17,14 +18,13 @@ impl Operation for ExitOnErrorOperation {
         "exit_on_error"
     }
 
-    async fn run(&self, session: &Session, emit: Emitter) -> Result<OperationResult> {
-        if session
-            .conversation
-            .as_ref()
-            .and_then(|c| c.last())
-            .and_then(|m| m.error_kind())
-            .is_none()
-        {
+    async fn run(
+        &self,
+        _session: &Session,
+        conversation: &Conversation,
+        emit: Emitter,
+    ) -> Result<OperationResult> {
+        if conversation.last().and_then(|m| m.error_kind()).is_none() {
             return Ok(OperationResult::NotApplicable(emit));
         }
 

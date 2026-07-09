@@ -9,13 +9,12 @@ use rmcp::model::{CallToolResult, Content, ErrorCode, ErrorData, Role};
 use crate::agents::agent::{tool_stream, ToolStreamItem};
 use crate::agents::extension_manager::ExtensionManager;
 use crate::agents::state_machine::operation::{Emitter, Operation, OperationResult};
-use crate::agents::state_machine::ops_tool_approval::{
-    TOOL_APPROVAL_ALLOWED, TOOL_APPROVAL_DENIED, TOOL_APPROVAL_KEY,
-};
+use crate::agents::state_machine::ops_tool_approval::request_executable;
 use crate::agents::tool_execution::DECLINED_RESPONSE;
 use crate::agents::tool_execution::{ToolCallContext, ToolCallResult};
 use crate::agents::AgentEvent;
-use crate::conversation::message::{Message, MessageContent, ToolRequest};
+use crate::conversation::message::{ActionRequiredData, Message, MessageContent, ToolRequest};
+use crate::conversation::Conversation;
 use crate::session::Session;
 
 /// Executes pending tool requests: when the last message is an assistant
@@ -35,34 +34,73 @@ impl ToolExecutionOperation {
     }
 }
 
-fn pending_tool_requests(session: &Session) -> Vec<ToolRequest> {
-    let Some(last) = session.conversation.as_ref().and_then(|c| c.last()) else {
-        return Vec::new();
-    };
-
-    if last.role != Role::Assistant {
-        return Vec::new();
+fn pending_tool_requests(conversation: &Conversation) -> Vec<(ToolRequest, ToolDisposition)> {
+    let mut answered = HashSet::new();
+    let mut approval_requests = HashSet::new();
+    let mut approvals = std::collections::HashMap::new();
+    for message in conversation.messages() {
+        for content in &message.content {
+            match content {
+                MessageContent::ToolResponse(response) => {
+                    answered.insert(response.id.clone());
+                }
+                MessageContent::ActionRequired(action) => match &action.data {
+                    ActionRequiredData::ToolConfirmation { id, .. } => {
+                        approval_requests.insert(id.clone());
+                    }
+                    ActionRequiredData::ToolConfirmationResponse { id, permission } => {
+                        approvals.insert(id.clone(), permission.clone());
+                    }
+                    _ => {}
+                },
+                _ => {}
+            }
+        }
     }
 
-    last.content
+    conversation
+        .messages()
         .iter()
-        .filter_map(|c| match c {
-            MessageContent::ToolRequest(req)
-                if req.tool_call.is_ok() && approval_state(req).is_some() =>
-            {
-                Some(req.clone())
-            }
-            _ => None,
+        .filter(|message| message.role == Role::Assistant)
+        .flat_map(|message| {
+            message.content.iter().filter_map(|c| match c {
+                MessageContent::ToolRequest(req)
+                    if req.tool_call.is_ok() && !answered.contains(&req.id) =>
+                {
+                    match request_executable(req).unwrap_or(true) {
+                        true => Some((req.clone(), ToolDisposition::Execute)),
+                        false => {
+                            if approval_requests.contains(&req.id)
+                                && !approval_denied(approvals.get(&req.id))
+                            {
+                                None
+                            } else {
+                                Some((req.clone(), ToolDisposition::Decline))
+                            }
+                        }
+                    }
+                }
+                _ => None,
+            })
         })
         .collect()
 }
 
-fn approval_state(request: &ToolRequest) -> Option<&str> {
-    request
-        .tool_meta
-        .as_ref()
-        .and_then(|meta| meta.get(TOOL_APPROVAL_KEY))
-        .and_then(|value| value.as_str())
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum ToolDisposition {
+    Execute,
+    Decline,
+}
+
+fn approval_denied(permission: Option<&crate::permission::Permission>) -> bool {
+    matches!(
+        permission,
+        Some(
+            crate::permission::Permission::DenyOnce
+                | crate::permission::Permission::AlwaysDeny
+                | crate::permission::Permission::Cancel
+        )
+    )
 }
 
 #[async_trait]
@@ -71,15 +109,21 @@ impl Operation for ToolExecutionOperation {
         "tool_execution"
     }
 
-    async fn run(&self, session: &Session, emit: Emitter) -> Result<OperationResult> {
-        let requests = pending_tool_requests(session);
+    async fn run(
+        &self,
+        session: &Session,
+        conversation: &Conversation,
+        emit: Emitter,
+    ) -> Result<OperationResult> {
+        let pending = pending_tool_requests(conversation);
+        let requests: Vec<_> = pending.iter().map(|(request, _)| request.clone()).collect();
         if requests.is_empty() {
             return Ok(OperationResult::NotApplicable(emit));
         }
 
         let mut tool_streams = Vec::new();
-        for request in &requests {
-            if approval_state(request) != Some(TOOL_APPROVAL_ALLOWED) {
+        for (request, disposition) in &pending {
+            if *disposition != ToolDisposition::Execute {
                 continue;
             }
             let tool_call = request
@@ -118,8 +162,8 @@ impl Operation for ToolExecutionOperation {
 
         let mut combined = futures::stream::select_all(tool_streams);
         let mut response = Message::user().with_generated_id();
-        for request in &requests {
-            if approval_state(request) == Some(TOOL_APPROVAL_DENIED) {
+        for (request, disposition) in &pending {
+            if *disposition == ToolDisposition::Decline {
                 response.add_tool_response_with_metadata(
                     request.id.clone(),
                     Ok(CallToolResult::error(vec![Content::text(

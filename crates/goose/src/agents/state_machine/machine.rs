@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use async_stream::try_stream;
 use futures::stream::BoxStream;
 use tokio::sync::mpsc;
@@ -92,14 +92,14 @@ pub async fn reply(
             provider.clone(),
             model_config.clone(),
         )),
+        Arc::new(ToolApprovalOperation::new(agent)),
+        Arc::new(ToolExecutionOperation::new(agent.extension_manager.clone())),
         Arc::new(LlmOperation::new(
             provider,
             model_config,
             system_prompt,
             tools,
         )),
-        Arc::new(ToolApprovalOperation::new(agent)),
-        Arc::new(ToolExecutionOperation::new(agent.extension_manager.clone())),
         Arc::new(ExitOnErrorOperation),
     ];
 
@@ -112,6 +112,10 @@ pub async fn reply(
             let session = session_manager
                 .get_session(&session_id, true)
                 .await?;
+            let conversation = session
+                .conversation
+                .as_ref()
+                .ok_or_else(|| anyhow!("state-machine session loaded without conversation"))?;
 
             let (tx, mut rx) = mpsc::channel::<AgentEvent>(32);
             let mut emitter = Some(Emitter::new(tx, cancel.clone()));
@@ -119,7 +123,7 @@ pub async fn reply(
 
             for op in &operations {
                 let emit = emitter.take().expect("emitter should be returned by skipped ops");
-                let op_fut = op.run(&session, emit);
+                let op_fut = op.run(&session, conversation, emit);
                 tokio::pin!(op_fut);
 
                 let result = loop {

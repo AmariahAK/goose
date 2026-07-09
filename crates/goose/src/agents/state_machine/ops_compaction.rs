@@ -83,13 +83,15 @@ impl Operation for CompactionOperation {
         "compaction"
     }
 
-    async fn run(&self, session: &Session, emit: Emitter) -> Result<OperationResult> {
+    async fn run(
+        &self,
+        session: &Session,
+        conversation: &Conversation,
+        emit: Emitter,
+    ) -> Result<OperationResult> {
         if self.manages_own_context {
             return Ok(OperationResult::NotApplicable(emit));
         }
-        let Some(conversation) = session.conversation.as_ref() else {
-            return Ok(OperationResult::NotApplicable(emit));
-        };
 
         let reactive_context_error = matches!(
             conversation.last().and_then(|m| m.error_kind()),

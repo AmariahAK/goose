@@ -419,6 +419,10 @@ pub fn format_message_for_compacting(msg: &Message) -> String {
                 ActionRequiredData::ElicitationResponse { id, .. } => {
                     Some(format!("action_required(elicitation_response): {}", id))
                 }
+                ActionRequiredData::ToolConfirmationResponse { id, .. } => Some(format!(
+                    "action_required(tool_confirmation_response): {}",
+                    id
+                )),
             },
             MessageContent::FrontendToolRequest(req) => {
                 if let Ok(call) = &req.tool_call {

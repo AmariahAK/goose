@@ -10,8 +10,7 @@ use crate::agents::types::SessionConfig;
 use crate::agents::{state_machine, AgentEvent};
 use crate::config::GooseMode;
 use crate::conversation::message::{ActionRequiredData, Message, MessageContent};
-use crate::permission::permission_confirmation::PrincipalType;
-use crate::permission::{Permission, PermissionConfirmation};
+use crate::permission::Permission;
 use std::sync::Arc;
 
 #[tokio::test]
@@ -137,22 +136,40 @@ async fn approve_mode_waits_for_tool_confirmation_before_execution() -> Result<(
                 )
             }) {
                 saw_confirmation = true;
-                harness
-                    .agent
-                    .handle_confirmation(
-                        "call_1".to_string(),
-                        PermissionConfirmation {
-                            principal_type: PrincipalType::Tool,
-                            permission: Permission::AllowOnce,
-                        },
-                    )
-                    .await;
             }
             messages.push(message.clone());
         }
     }
 
     assert!(saw_confirmation, "messages: {messages:#?}");
+    assert_eq!(harness.provider.call_count(), 1);
+
+    let stream = state_machine::reply(
+        &harness.agent,
+        Message::user()
+            .with_content(MessageContent::action_required_tool_confirmation_response(
+                "call_1",
+                Permission::AllowOnce,
+            ))
+            .with_visibility(false, false),
+        SessionConfig {
+            id: harness.session_id.clone(),
+            schedule_id: None,
+            max_turns: Some(10),
+            retry_config: None,
+        },
+        None,
+    )
+    .await?;
+    tokio::pin!(stream);
+
+    while let Some(event) = stream.next().await {
+        let event = event?;
+        if let AgentEvent::Message(message) = event {
+            messages.push(message);
+        }
+    }
+
     assert_eq!(harness.provider.call_count(), 2);
     assert!(messages.iter().any(|m| {
         m.role == Role::User && m.is_tool_response() && tool_response_text(m).contains("\"x\":1")
@@ -192,6 +209,7 @@ async fn denied_tool_confirmation_becomes_tool_response() -> Result<()> {
     tokio::pin!(stream);
 
     let mut messages = Vec::new();
+    let mut saw_confirmation = false;
     while let Some(event) = stream.next().await {
         let event = event?;
         if let AgentEvent::Message(message) = &event {
@@ -205,18 +223,36 @@ async fn denied_tool_confirmation_becomes_tool_response() -> Result<()> {
                         )
                 )
             }) {
-                harness
-                    .agent
-                    .handle_confirmation(
-                        "call_1".to_string(),
-                        PermissionConfirmation {
-                            principal_type: PrincipalType::Tool,
-                            permission: Permission::DenyOnce,
-                        },
-                    )
-                    .await;
+                saw_confirmation = true;
             }
             messages.push(message.clone());
+        }
+    }
+
+    assert!(saw_confirmation, "messages: {messages:#?}");
+    let stream = state_machine::reply(
+        &harness.agent,
+        Message::user()
+            .with_content(MessageContent::action_required_tool_confirmation_response(
+                "call_1",
+                Permission::DenyOnce,
+            ))
+            .with_visibility(false, false),
+        SessionConfig {
+            id: harness.session_id.clone(),
+            schedule_id: None,
+            max_turns: Some(10),
+            retry_config: None,
+        },
+        None,
+    )
+    .await?;
+    tokio::pin!(stream);
+
+    while let Some(event) = stream.next().await {
+        let event = event?;
+        if let AgentEvent::Message(message) = event {
+            messages.push(message);
         }
     }
 
@@ -296,10 +332,12 @@ async fn provider_error_is_persisted_and_yields() -> Result<()> {
 
     // It is durable conversation state, tagged, user-visible, agent-invisible.
     let persisted = harness.persisted_messages().await?;
-    let last = persisted.last().expect("a persisted message");
-    assert_eq!(last.error_kind(), Some(MessageErrorKind::Other));
-    assert!(last.is_user_visible());
-    assert!(!last.is_agent_visible());
+    let error = persisted
+        .iter()
+        .find(|m| m.error_kind() == Some(MessageErrorKind::Other))
+        .expect("a persisted error message");
+    assert!(error.is_user_visible());
+    assert!(!error.is_agent_visible());
 
     // The provider was called exactly once: ExitOnError yielded, no retry.
     assert_eq!(harness.provider.call_count(), 1);
