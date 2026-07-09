@@ -6,7 +6,7 @@ use goose_providers::{
     model::ModelConfig,
     openai::OpenAiProvider,
 };
-use js_sys::Function;
+use js_sys::{Array, Function, Reflect};
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen(start)]
@@ -15,11 +15,11 @@ pub fn start() {
 }
 
 #[wasm_bindgen]
-pub async fn stream_openai(
+pub async fn stream_openai_chat(
     api_key: String,
     base_url: String,
     model: String,
-    prompt: String,
+    messages: JsValue,
     on_chunk: Function,
 ) -> Result<String, JsValue> {
     let api_client = ApiClient::new_with_tls(base_url, AuthMethod::BearerToken(api_key), None)
@@ -27,7 +27,7 @@ pub async fn stream_openai(
 
     let provider = OpenAiProvider::new(api_client);
     let model = ModelConfig::new(model);
-    let messages = [Message::user().with_text(prompt)];
+    let messages = parse_messages(messages)?;
 
     let mut stream = provider
         .stream(&model, "You are a concise assistant.", &messages, &[])
@@ -51,6 +51,34 @@ pub async fn stream_openai(
     }
 
     Ok(output)
+}
+
+fn parse_messages(value: JsValue) -> Result<Vec<Message>, JsValue> {
+    if !Array::is_array(&value) {
+        return Err(JsValue::from_str("messages must be an array"));
+    }
+
+    let messages = Array::from(&value);
+    let mut parsed = Vec::with_capacity(messages.length() as usize);
+
+    for message in messages.iter() {
+        let role = get_string_property(&message, "role")?;
+        let content = get_string_property(&message, "content")?;
+        let message = match role.as_str() {
+            "user" => Message::user().with_text(content),
+            "assistant" => Message::assistant().with_text(content),
+            other => return Err(JsValue::from_str(&format!("unsupported role: {other}"))),
+        };
+        parsed.push(message);
+    }
+
+    Ok(parsed)
+}
+
+fn get_string_property(value: &JsValue, property: &str) -> Result<String, JsValue> {
+    Reflect::get(value, &JsValue::from_str(property))?
+        .as_string()
+        .ok_or_else(|| JsValue::from_str(&format!("message.{property} must be a string")))
 }
 
 fn to_js_error(error: impl std::fmt::Display) -> JsValue {
