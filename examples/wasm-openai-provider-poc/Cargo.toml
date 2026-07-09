@@ -13,5 +13,6 @@ crate-type = ["cdylib"]
 console_error_panic_hook = "0.1"
 futures = "0.3"
 goose-providers = { path = "../../crates/goose-providers", default-features = false }
+js-sys = "0.3.103"
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"

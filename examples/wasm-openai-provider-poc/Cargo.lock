@@ -1487,6 +1487,7 @@ dependencies = [
  "console_error_panic_hook",
  "futures",
  "goose-providers",
+ "js-sys",
  "wasm-bindgen",
  "wasm-bindgen-futures",
 ]

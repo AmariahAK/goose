@@ -59,7 +59,10 @@ Optional proxy: node proxy.mjs</pre>
           const baseUrl = document.getElementById("base-url").value;
           const model = document.getElementById("model").value;
           const prompt = document.getElementById("prompt").value;
-          output.textContent = await stream_openai(apiKey, baseUrl, model, prompt);
+          output.textContent = "";
+          await stream_openai(apiKey, baseUrl, model, prompt, (chunk) => {
+            output.textContent += chunk;
+          });
         } catch (error) {
           output.textContent = error?.stack || String(error);
         } finally {

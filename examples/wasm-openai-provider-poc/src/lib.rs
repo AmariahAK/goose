@@ -6,6 +6,7 @@ use goose_providers::{
     model::ModelConfig,
     openai::OpenAiProvider,
 };
+use js_sys::Function;
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen(start)]
@@ -19,6 +20,7 @@ pub async fn stream_openai(
     base_url: String,
     model: String,
     prompt: String,
+    on_chunk: Function,
 ) -> Result<String, JsValue> {
     let api_client = ApiClient::new_with_tls(base_url, AuthMethod::BearerToken(api_key), None)
         .map_err(to_js_error)?;
@@ -36,7 +38,15 @@ pub async fn stream_openai(
     while let Some(item) = stream.next().await {
         let (message, _) = item.map_err(to_js_error)?;
         if let Some(message) = message {
-            output.push_str(&message.as_concat_text());
+            let chunk = message.as_concat_text();
+            if !chunk.is_empty() {
+                output.push_str(&chunk);
+                on_chunk
+                    .call1(&JsValue::NULL, &JsValue::from_str(&chunk))
+                    .map_err(|error| {
+                        JsValue::from_str(&format!("chunk callback failed: {error:?}"))
+                    })?;
+            }
         }
     }
 
