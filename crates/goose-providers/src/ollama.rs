@@ -384,7 +384,8 @@ impl ProviderDescriptor for OllamaProvider {
     }
 }
 
-#[async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl Provider for OllamaProvider {
     fn get_name(&self) -> &str {
         &self.name
@@ -470,10 +471,19 @@ pub const OLLAMA_DEFAULT_CHUNK_TIMEOUT_SECS: u64 = 120;
 /// Wraps a line stream with a per-item timeout at the raw SSE level.
 /// This detects dead connections without false-positive stalls during long
 /// tool-call generations where response_to_streaming_message_ollama buffers.
+#[cfg(not(target_arch = "wasm32"))]
+type LineStream = std::pin::Pin<Box<dyn futures::Stream<Item = anyhow::Result<String>> + Send>>;
+
+#[cfg(target_arch = "wasm32")]
+type LineStream = std::pin::Pin<Box<dyn futures::Stream<Item = anyhow::Result<String>>>>;
+
 fn with_line_timeout(
-    stream: impl futures::Stream<Item = anyhow::Result<String>> + Unpin + Send + 'static,
+    stream: impl futures::Stream<Item = anyhow::Result<String>>
+        + Unpin
+        + goose_provider_types::formats::anthropic::StreamSend
+        + 'static,
     timeout_secs: u64,
-) -> std::pin::Pin<Box<dyn futures::Stream<Item = anyhow::Result<String>> + Send>> {
+) -> LineStream {
     let timeout = Duration::from_secs(timeout_secs);
     Box::pin(try_stream! {
         let mut stream = stream;

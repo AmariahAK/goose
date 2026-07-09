@@ -307,7 +307,7 @@ fn process_response_part_impl(
 
 pub fn response_to_message(response: Value) -> Result<Message> {
     let role = Role::Assistant;
-    let created = chrono::Utc::now().timestamp();
+    let created = crate::time::timestamp();
 
     let parts = response
         .get("candidates")
@@ -364,11 +364,13 @@ pub fn get_usage(data: &Value) -> Result<Usage> {
     }
 }
 
+use super::anthropic::StreamSend;
+
 pub fn response_to_streaming_message<S>(
     mut stream: S,
 ) -> impl futures::Stream<Item = anyhow::Result<(Option<Message>, Option<ProviderUsage>)>> + 'static
 where
-    S: futures::Stream<Item = anyhow::Result<String>> + Unpin + Send + 'static,
+    S: futures::Stream<Item = anyhow::Result<String>> + Unpin + StreamSend + 'static,
 {
     use async_stream::try_stream;
     use futures::StreamExt;
@@ -467,7 +469,7 @@ where
                     if let Some(content) = process_response_part_impl(part, &mut last_signature) {
                         let message = Message::new(
                             Role::Assistant,
-                            chrono::Utc::now().timestamp(),
+                            crate::time::timestamp(),
                             vec![content],
                         ).with_id(stream_id.clone());
                         yield (Some(message), None);

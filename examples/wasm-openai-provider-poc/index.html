@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>goose-providers OpenAI wasm POC</title>
+    <style>
+      body { font-family: system-ui, sans-serif; max-width: 800px; margin: 2rem auto; }
+      label { display: block; margin: 1rem 0 0.25rem; font-weight: 600; }
+      input, textarea, select, button { box-sizing: border-box; width: 100%; font: inherit; padding: 0.5rem; }
+      textarea { min-height: 6rem; }
+      button { margin-top: 1rem; cursor: pointer; }
+      pre { white-space: pre-wrap; background: #f5f5f5; padding: 1rem; min-height: 8rem; }
+      .hint { color: #555; font-size: 0.9rem; }
+    </style>
+  </head>
+  <body>
+    <h1>goose-providers OpenAI wasm POC</h1>
+
+    <label for="api-key">OpenAI API key</label>
+    <input id="api-key" type="password" autocomplete="off" placeholder="sk-..." />
+
+    <label for="base-url">Base URL</label>
+    <input id="base-url" value="https://api.openai.com" />
+    <p class="hint">
+      If direct calls are blocked by CORS, run <code>node proxy.mjs</code> and use
+      <code>http://localhost:8787</code>.
+    </p>
+
+    <label for="model">Model</label>
+    <select id="model">
+      <option value="gpt-5.5">gpt-5.5</option>
+      <option value="gpt-4o-mini" selected>gpt-4o-mini</option>
+    </select>
+
+    <label for="prompt">Prompt</label>
+    <textarea id="prompt">What is the capital of France?</textarea>
+
+    <button id="run">Call OpenAiProvider from wasm</button>
+
+    <h2>Output</h2>
+    <pre id="output">Build with: wasm-pack build --target web
+Serve this directory with: python3 -m http.server 8080
+Optional proxy: node proxy.mjs</pre>
+
+    <script type="module">
+      import init, { stream_openai } from "./pkg/wasm_openai_provider_poc.js";
+
+      const output = document.getElementById("output");
+      const run = document.getElementById("run");
+
+      await init();
+
+      run.addEventListener("click", async () => {
+        output.textContent = "Calling OpenAiProvider from wasm...";
+        run.disabled = true;
+
+        try {
+          const apiKey = document.getElementById("api-key").value;
+          const baseUrl = document.getElementById("base-url").value;
+          const model = document.getElementById("model").value;
+          const prompt = document.getElementById("prompt").value;
+          output.textContent = await stream_openai(apiKey, baseUrl, model, prompt);
+        } catch (error) {
+          output.textContent = error?.stack || String(error);
+        } finally {
+          run.disabled = false;
+        }
+      });
+    </script>
+  </body>
+</html>

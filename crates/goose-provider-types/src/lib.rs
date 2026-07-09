@@ -12,4 +12,5 @@ pub mod permission;
 pub mod request_log;
 pub mod retry;
 pub mod thinking;
+pub mod time;
 pub mod utils;

@@ -2,7 +2,6 @@ use crate::conversation::token_usage::{CostSource, ProviderUsage};
 use crate::conversation::tool_result_serde;
 use crate::mcp_utils::extract_text_from_resource;
 use crate::utils::sanitize_unicode_tags;
-use chrono::Utc;
 use rmcp::model::{
     AnnotateAble, CallToolRequestParams, CallToolResult, Content, ElicitationAction, ImageContent,
     JsonObject, PromptMessage, PromptMessageContent, PromptMessageRole, RawContent,
@@ -857,7 +856,7 @@ impl Message {
         Message {
             id: None,
             role: Role::User,
-            created: Utc::now().timestamp(),
+            created: crate::time::timestamp(),
             content: Vec::new(),
             metadata: MessageMetadata::default(),
         }
@@ -868,7 +867,7 @@ impl Message {
         Message {
             id: None,
             role: Role::Assistant,
-            created: Utc::now().timestamp(),
+            created: crate::time::timestamp(),
             content: Vec::new(),
             metadata: MessageMetadata::default(),
         }

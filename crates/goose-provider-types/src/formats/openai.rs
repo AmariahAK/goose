@@ -10,7 +10,6 @@ use crate::thinking::{
 };
 use anyhow::{anyhow, Error};
 use async_stream::try_stream;
-use chrono;
 use futures::Stream;
 use regex::Regex;
 use rmcp::model::{
@@ -775,7 +774,7 @@ pub fn response_to_message(response: &Value) -> anyhow::Result<Message> {
 
     Ok(Message::new(
         Role::Assistant,
-        chrono::Utc::now().timestamp(),
+        crate::time::timestamp(),
         content,
     ))
 }
@@ -1001,7 +1000,10 @@ pub fn response_to_streaming_message<S>(
     mut stream: S,
 ) -> impl Stream<Item = anyhow::Result<(Option<Message>, Option<ProviderUsage>)>> + 'static
 where
-    S: Stream<Item = anyhow::Result<String>> + Unpin + Send + 'static,
+    S: Stream<Item = anyhow::Result<String>>
+        + Unpin
+        + crate::formats::anthropic::StreamSend
+        + 'static,
 {
     try_stream! {
         use futures::StreamExt;
@@ -1156,7 +1158,7 @@ where
                     if !filtered_contents.is_empty() {
                         let mut msg = Message::new(
                             Role::Assistant,
-                            chrono::Utc::now().timestamp(),
+                            crate::time::timestamp(),
                             filtered_contents,
                         );
 
@@ -1245,7 +1247,7 @@ where
 
                 let mut msg = Message::new(
                     Role::Assistant,
-                    chrono::Utc::now().timestamp(),
+                    crate::time::timestamp(),
                     contents,
                 );
 
@@ -1288,7 +1290,7 @@ where
                 if !content.is_empty() {
                     let mut msg = Message::new(
                         Role::Assistant,
-                        chrono::Utc::now().timestamp(),
+                        crate::time::timestamp(),
                         content,
                     );
 
@@ -1334,7 +1336,7 @@ where
             yield (
                 Some(Message::new(
                     Role::Assistant,
-                    chrono::Utc::now().timestamp(),
+                    crate::time::timestamp(),
                     content,
                 )),
                 None,

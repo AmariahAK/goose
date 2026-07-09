@@ -469,7 +469,7 @@ pub fn response_to_message(response: &Value) -> anyhow::Result<Message> {
 
     Ok(Message::new(
         Role::Assistant,
-        chrono::Utc::now().timestamp(),
+        crate::time::timestamp(),
         content,
     ))
 }

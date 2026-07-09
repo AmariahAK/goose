@@ -6,6 +6,16 @@
 
 use std::time::{Duration, SystemTime};
 
+#[cfg(target_arch = "wasm32")]
+fn now_system_time() -> SystemTime {
+    SystemTime::UNIX_EPOCH + Duration::from_millis(js_sys::Date::now() as u64)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn now_system_time() -> SystemTime {
+    SystemTime::now()
+}
+
 use crate::errors::ProviderError;
 use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
 use reqwest::header::{HeaderMap, RETRY_AFTER};
@@ -82,7 +92,7 @@ fn parse_retry_after_header(value: &str) -> Option<Duration> {
     }
     let target = parse_http_date(value)?;
     let delay = target
-        .duration_since(SystemTime::now())
+        .duration_since(now_system_time())
         .unwrap_or(Duration::ZERO);
     duration_from_finite_secs(delay.as_secs_f64())
 }

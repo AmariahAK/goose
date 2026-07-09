@@ -251,7 +251,11 @@ impl ApiClient {
         timeout: Duration,
         tls_config: Option<TlsConfig>,
     ) -> Result<Self> {
-        let mut client_builder = Client::builder().timeout(timeout);
+        let mut client_builder = Client::builder();
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            client_builder = client_builder.timeout(timeout);
+        }
 
         if let Some(ref config) = tls_config {
             client_builder = Self::configure_tls(client_builder, config)?;
@@ -276,9 +280,11 @@ impl ApiClient {
     }
 
     fn rebuild_client(&mut self) -> Result<()> {
-        let mut client_builder = Client::builder()
-            .timeout(self.timeout)
-            .default_headers(self.default_headers.clone());
+        let mut client_builder = Client::builder().default_headers(self.default_headers.clone());
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            client_builder = client_builder.timeout(self.timeout);
+        }
 
         // Configure TLS if needed
         if let Some(ref tls_config) = self.tls_config {

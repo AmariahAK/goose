@@ -37,16 +37,16 @@ chrono = { workspace = true }
 futures = { workspace = true }
 goose-provider-types = { version = "0.1.0-alpha.0", path = "../goose-provider-types", default-features = false }
 goose-local-inference = { version = "0.1.0-alpha.0", path = "../goose-local-inference", default-features = false, optional = true }
-reqwest = { workspace = true }
-rmcp = { workspace = true, features = ["server", "macros"] }
+reqwest = { workspace = true, features = ["json", "stream"] }
+rmcp = { path = "../../../rust-sdk/crates/rmcp", default-features = false, features = ["schemars"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }
 utoipa = { workspace = true, features = ["chrono"] }
 async-trait = { workspace = true }
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["io-util"] }
 tokio-stream = { workspace = true, features = ["io-util"] }
-tokio-util = { workspace = true, features = ["compat"] }
+tokio-util = { workspace = true, features = ["compat", "io", "codec"] }
 url = { workspace = true }
 urlencoding = { workspace = true }
 pem = { version = "3.0.2", default-features = false, features = ["std"], optional = true }
@@ -67,3 +67,6 @@ wiremock.workspace = true
 [[example]]
 name = "streaming"
 required-features = ["rustls-tls"]
+
+[target.wasm32-unknown-unknown.dependencies]
+js-sys = "0.3.103"

@@ -88,15 +88,41 @@ impl ProviderError {
     }
 }
 
-fn is_network_error(err: &reqwest::Error) -> bool {
-    err.is_connect() || err.is_timeout() || (err.status().is_none() && err.is_request())
+#[cfg(not(target_arch = "wasm32"))]
+fn is_network_error(error: &reqwest::Error) -> bool {
+    error.is_connect() || error.is_timeout() || (error.status().is_none() && error.is_request())
+}
+
+#[cfg(target_arch = "wasm32")]
+fn is_network_error(error: &reqwest::Error) -> bool {
+    error.status().is_none()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn is_connect_error(error: &reqwest::Error) -> bool {
+    error.is_connect()
+}
+
+#[cfg(target_arch = "wasm32")]
+fn is_connect_error(_error: &reqwest::Error) -> bool {
+    false
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn is_timeout_error(error: &reqwest::Error) -> bool {
+    error.is_timeout()
+}
+
+#[cfg(target_arch = "wasm32")]
+fn is_timeout_error(_error: &reqwest::Error) -> bool {
+    false
 }
 
 fn provider_error_from_reqwest(error: &reqwest::Error) -> ProviderError {
     if is_network_error(error) {
-        let msg = if error.is_timeout() {
+        let msg = if is_timeout_error(error) {
             "Request timed out — check your network connection and try again.".to_string()
-        } else if error.is_connect() {
+        } else if is_connect_error(error) {
             if let Some(url) = error.url() {
                 if let Some(host) = url.host_str() {
                     let port_info = url.port().map(|p| format!(":{}", p)).unwrap_or_default();

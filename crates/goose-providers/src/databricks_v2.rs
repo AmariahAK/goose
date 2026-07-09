@@ -319,7 +319,8 @@ impl crate::base::ProviderDescriptor for DatabricksV2Provider {
     }
 }
 
-#[async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl Provider for DatabricksV2Provider {
     fn get_name(&self) -> &str {
         &self.name

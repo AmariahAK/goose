@@ -15,7 +15,6 @@ use crate::{
     formats::openai::{self, is_valid_function_name},
 };
 use async_stream::try_stream;
-use chrono;
 use futures::Stream;
 use regex::Regex;
 use rmcp::model::{object, CallToolRequestParams, ErrorCode, ErrorData, Role};
@@ -113,7 +112,7 @@ pub fn response_to_message(response: &Value) -> anyhow::Result<Message> {
 
                     return Ok(Message::new(
                         Role::Assistant,
-                        chrono::Utc::now().timestamp(),
+                        crate::time::timestamp(),
                         content,
                     ));
                 }
@@ -160,7 +159,10 @@ pub fn response_to_streaming_message_ollama<S>(
     stream: S,
 ) -> impl Stream<Item = anyhow::Result<(Option<Message>, Option<ProviderUsage>)>> + 'static
 where
-    S: Stream<Item = anyhow::Result<String>> + Unpin + Send + 'static,
+    S: Stream<Item = anyhow::Result<String>>
+        + Unpin
+        + crate::formats::anthropic::StreamSend
+        + 'static,
 {
     try_stream! {
         use futures::StreamExt;
@@ -211,7 +213,7 @@ where
 
                 let msg = Message::new(
                     Role::Assistant,
-                    chrono::Utc::now().timestamp(),
+                    crate::time::timestamp(),
                     contents,
                 );
 
@@ -219,7 +221,7 @@ where
             } else {
                 let msg = Message::new(
                     Role::Assistant,
-                    chrono::Utc::now().timestamp(),
+                    crate::time::timestamp(),
                     vec![MessageContent::text(&accumulated_text)],
                 );
 

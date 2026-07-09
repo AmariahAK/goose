@@ -290,7 +290,8 @@ impl crate::base::ProviderDescriptor for SnowflakeProvider {
     }
 }
 
-#[async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl Provider for SnowflakeProvider {
     fn get_name(&self) -> &str {
         &self.name

@@ -8,7 +8,6 @@ use crate::mcp_utils::extract_text_from_resource;
 use crate::model::ModelConfig;
 use anyhow::{anyhow, Error};
 use async_stream::try_stream;
-use chrono;
 use futures::Stream;
 use rmcp::model::{object, CallToolRequestParams, RawContent, Role, Tool};
 use serde::{Deserialize, Serialize};
@@ -714,7 +713,7 @@ pub fn responses_api_to_message(response: &ResponsesApiResponse) -> anyhow::Resu
         }
     }
 
-    let mut message = Message::new(Role::Assistant, chrono::Utc::now().timestamp(), content);
+    let mut message = Message::new(Role::Assistant, crate::time::timestamp(), content);
 
     message = message.with_id(response.id.clone());
 
@@ -803,7 +802,10 @@ pub fn responses_api_to_streaming_message<S>(
     mut stream: S,
 ) -> impl Stream<Item = anyhow::Result<(Option<Message>, Option<ProviderUsage>)>> + 'static
 where
-    S: Stream<Item = anyhow::Result<String>> + Unpin + Send + 'static,
+    S: Stream<Item = anyhow::Result<String>>
+        + Unpin
+        + crate::formats::anthropic::StreamSend
+        + 'static,
 {
     try_stream! {
         use futures::StreamExt;
@@ -864,7 +866,7 @@ where
                         // Yield incremental text updates for true streaming
                         let mut msg = Message::new(
                             Role::Assistant,
-                            chrono::Utc::now().timestamp(),
+                            crate::time::timestamp(),
                             vec![MessageContent::text(&delta)],
                         );
 
@@ -917,7 +919,7 @@ where
 
                         let mut msg = Message::new(
                             Role::Assistant,
-                            chrono::Utc::now().timestamp(),
+                            crate::time::timestamp(),
                             vec![MessageContent::text(&delta)],
                         );
 
@@ -957,7 +959,7 @@ where
         let content = process_streaming_output_items(output_items, is_text_response)?;
 
         if !content.is_empty() {
-            let mut message = Message::new(Role::Assistant, chrono::Utc::now().timestamp(), content);
+            let mut message = Message::new(Role::Assistant, crate::time::timestamp(), content);
             if let Some(id) = response_id {
                 message = message.with_id(id);
             }

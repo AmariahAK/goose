@@ -5,6 +5,16 @@ use std::future::Future;
 use std::time::Duration;
 use tokio::time::sleep;
 
+#[cfg(not(target_arch = "wasm32"))]
+pub trait RetrySend: Send {}
+#[cfg(not(target_arch = "wasm32"))]
+impl<T: Send> RetrySend for T {}
+
+#[cfg(target_arch = "wasm32")]
+pub trait RetrySend {}
+#[cfg(target_arch = "wasm32")]
+impl<T> RetrySend for T {}
+
 pub const DEFAULT_MAX_RETRIES: usize = 3;
 pub const DEFAULT_INITIAL_RETRY_INTERVAL_MS: u64 = 1000;
 pub const DEFAULT_BACKOFF_MULTIPLIER: f64 = 2.0;
@@ -151,7 +161,8 @@ where
 /// Trait for retry functionality to keep Provider dyn-compatible.
 ///
 /// All `Provider` implementors get this via the blanket impl below.
-#[async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 pub trait ProviderRetry {
     fn retry_config(&self) -> RetryConfig {
         RetryConfig::default()
@@ -159,9 +170,9 @@ pub trait ProviderRetry {
 
     async fn with_retry<F, Fut, T>(&self, operation: F) -> Result<T, ProviderError>
     where
-        F: Fn() -> Fut + Send,
-        Fut: Future<Output = Result<T, ProviderError>> + Send,
-        T: Send,
+        F: Fn() -> Fut + RetrySend,
+        Fut: Future<Output = Result<T, ProviderError>> + RetrySend,
+        T: RetrySend,
     {
         self.with_retry_config(operation, self.retry_config()).await
     }
@@ -172,12 +183,13 @@ pub trait ProviderRetry {
         config: RetryConfig,
     ) -> Result<T, ProviderError>
     where
-        F: Fn() -> Fut + Send,
-        Fut: Future<Output = Result<T, ProviderError>> + Send,
-        T: Send;
+        F: Fn() -> Fut + RetrySend,
+        Fut: Future<Output = Result<T, ProviderError>> + RetrySend,
+        T: RetrySend;
 }
 
-#[async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl<P: Provider> ProviderRetry for P {
     fn retry_config(&self) -> RetryConfig {
         Provider::retry_config(self)
@@ -189,9 +201,9 @@ impl<P: Provider> ProviderRetry for P {
         config: RetryConfig,
     ) -> Result<T, ProviderError>
     where
-        F: Fn() -> Fut + Send,
-        Fut: Future<Output = Result<T, ProviderError>> + Send,
-        T: Send,
+        F: Fn() -> Fut + RetrySend,
+        Fut: Future<Output = Result<T, ProviderError>> + RetrySend,
+        T: RetrySend,
     {
         let mut attempts = 0;
         let mut auth_retried = false;

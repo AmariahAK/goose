@@ -743,12 +743,22 @@ pub fn create_request(
     Ok(payload)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+pub trait StreamSend: Send {}
+#[cfg(not(target_arch = "wasm32"))]
+impl<T: Send> StreamSend for T {}
+
+#[cfg(target_arch = "wasm32")]
+pub trait StreamSend {}
+#[cfg(target_arch = "wasm32")]
+impl<T> StreamSend for T {}
+
 /// Process streaming response from Anthropic's API
 pub fn response_to_streaming_message<S>(
     mut stream: S,
 ) -> impl futures::Stream<Item = anyhow::Result<(Option<Message>, Option<ProviderUsage>)>> + 'static
 where
-    S: futures::Stream<Item = anyhow::Result<String>> + Unpin + Send + 'static,
+    S: futures::Stream<Item = anyhow::Result<String>> + Unpin + StreamSend + 'static,
 {
     use async_stream::try_stream;
     use futures::StreamExt;
@@ -928,7 +938,7 @@ where
                                         );
                                         let mut message = Message::new(
                                             Role::Assistant,
-                                            chrono::Utc::now().timestamp(),
+                                            crate::time::timestamp(),
                                             vec![MessageContent::tool_request(tool_id, Err(error))],
                                         );
                                         message.id = message_id.clone();
@@ -942,7 +952,7 @@ where
 
                             let mut message = Message::new(
                                 rmcp::model::Role::Assistant,
-                                chrono::Utc::now().timestamp(),
+                                crate::time::timestamp(),
                                 vec![MessageContent::tool_request(tool_id, Ok(tool_call))],
                             );
                             message.id = message_id.clone();
@@ -1048,7 +1058,7 @@ where
                     let error = ErrorData::new(ErrorCode::INVALID_PARAMS, message_text, None);
                     let mut message = Message::new(
                         Role::Assistant,
-                        chrono::Utc::now().timestamp(),
+                        crate::time::timestamp(),
                         vec![MessageContent::tool_request(id, Err(error))],
                     );
                     message.id = message_id.clone();
