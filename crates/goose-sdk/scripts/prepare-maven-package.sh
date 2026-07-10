@@ -26,11 +26,12 @@ fi
 
 maven_dir="crates/goose-sdk/maven"
 kotlin_dir="$maven_dir/src/main/kotlin"
+support_kotlin_dir="$maven_dir/src/support/kotlin"
 resources_dir="$maven_dir/src/main/resources"
 
 rm -rf "$kotlin_dir/io/aaif/goose" "$resources_dir/$resource_prefix"
-mkdir -p "$kotlin_dir" "$resources_dir/$resource_prefix" "$maven_dir/src/main/resources/META-INF"
-cp LICENSE "$maven_dir/src/main/resources/META-INF/LICENSE"
+mkdir -p "$kotlin_dir" "$resources_dir/$resource_prefix" "$resources_dir/META-INF"
+cp LICENSE "$resources_dir/META-INF/LICENSE"
 
 "$bindgen" generate \
   --library "$native_lib" \
@@ -39,57 +40,10 @@ cp LICENSE "$maven_dir/src/main/resources/META-INF/LICENSE"
   --no-format \
   --out-dir "$kotlin_dir" 2>/dev/null
 
-cat > "$kotlin_dir/io/aaif/goose/NativeLibraryLoader.kt" <<'KOTLIN'
-package io.aaif.goose
-
-import com.sun.jna.Platform
-import java.nio.file.Files
-
-internal object NativeLibraryLoader {
-    init {
-        val componentName = "goose"
-        if (System.getProperty("uniffi.component.$componentName.libraryOverride") == null) {
-            val resource = nativeResourcePath()
-            val stream = NativeLibraryLoader::class.java.classLoader.getResourceAsStream(resource)
-                ?: error("Goose SDK native library resource not found: $resource")
-            val library = Files.createTempFile("goose-sdk-", nativeLibraryFileName()).toFile()
-            library.deleteOnExit()
-            stream.use { input -> library.outputStream().use { output -> input.copyTo(output) } }
-            System.setProperty("uniffi.component.$componentName.libraryOverride", library.absolutePath)
-        }
-    }
-
-    fun ensureLoaded() = Unit
-
-    private fun nativeResourcePath(): String = "${jnaResourcePrefix()}/${nativeLibraryFileName()}"
-
-    private fun nativeLibraryFileName(): String = when (osName()) {
-        "darwin" -> "libgoose_sdk.dylib"
-        "linux" -> "libgoose_sdk.so"
-        "win32" -> "goose_sdk.dll"
-        else -> error("Unsupported OS: ${System.getProperty("os.name")}")
-    }
-
-    private fun jnaResourcePrefix(): String = "${osName()}-${archName()}"
-
-    private fun osName(): String = when {
-        System.getProperty("os.name").startsWith("Mac OS X") -> "darwin"
-        System.getProperty("os.name").startsWith("Linux") -> "linux"
-        System.getProperty("os.name").startsWith("Windows") -> "win32"
-        else -> System.getProperty("os.name").lowercase().replace(Regex("\\s+"), "-")
-    }
-
-    private fun archName(): String = when {
-        Platform.isARM() && Platform.is64Bit() -> "aarch64"
-        Platform.isIntel() && Platform.is64Bit() -> "x86-64"
-        else -> System.getProperty("os.arch")
-    }
-}
-KOTLIN
-
 python3 - "$kotlin_dir/io/aaif/goose/goose.kt" <<'PY'
 import sys
 from pathlib import Path
+
 path = Path(sys.argv[1])
 text = path.read_text()
 needle = 'private fun findLibraryName(componentName: String): String {\n'
@@ -99,13 +53,5 @@ if needle not in text:
 path.write_text(text.replace(needle, replacement, 1))
 PY
 
-mkdir -p "$kotlin_dir/io/aaif/goose/providers/databricks"
-cat > "$kotlin_dir/io/aaif/goose/providers/databricks/Databricks.kt" <<'KOTLIN'
-package io.aaif.goose.providers.databricks
-
-public typealias DatabricksProvider = io.aaif.goose.DatabricksProvider
-
-public fun defaultModel(): String = io.aaif.goose.databricksDefaultModel()
-KOTLIN
-
+cp -R "$support_kotlin_dir"/. "$kotlin_dir"/
 cp "$native_lib" "$resources_dir/$resource_prefix/"

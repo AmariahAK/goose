@@ -8,12 +8,14 @@ use std::sync::{Arc, Mutex};
 
 use futures::StreamExt;
 use goose_providers::{
+    api_client::{ApiClient, AuthMethod},
     base::{MessageStream, Provider},
     conversation::message::Message,
     databricks::DatabricksProvider as GooseDatabricksProvider,
     databricks_auth::DatabricksAuth,
     declarative::EnvKeyResolver,
     model::ModelConfig,
+    openai::OpenAiProviderBuilder,
 };
 
 /// Errors surfaced across the uniffi boundary.
@@ -194,8 +196,52 @@ impl DeclarativeProvider {
 }
 
 #[uniffi::export]
+pub fn openai_default_model() -> String {
+    goose_providers::openai::OPEN_AI_DEFAULT_MODEL.to_string()
+}
+
+#[uniffi::export]
 pub fn databricks_default_model() -> String {
     goose_providers::databricks::DATABRICKS_DEFAULT_MODEL.to_string()
+}
+
+/// An OpenAI provider backed by Goose's native OpenAI implementation.
+#[derive(uniffi::Object)]
+pub struct OpenAiProvider {
+    handle: ProviderHandle,
+}
+
+#[uniffi::export]
+impl OpenAiProvider {
+    /// Construct an OpenAI provider using the default OpenAI API host.
+    #[uniffi::constructor]
+    pub fn new(api_key: String) -> Result<Arc<Self>, GooseError> {
+        let api_client = ApiClient::new_with_tls(
+            "https://api.openai.com".to_string(),
+            AuthMethod::BearerToken(api_key),
+            None,
+        )?;
+        let provider = OpenAiProviderBuilder::new(api_client).build();
+
+        Ok(Arc::new(Self {
+            handle: ProviderHandle::new(Box::new(provider))?,
+        }))
+    }
+
+    pub fn name(&self) -> String {
+        self.handle.name()
+    }
+
+    /// Start a streaming completion request. Tools are not yet exposed over the
+    /// uniffi boundary, so this calls providers with an empty tool list.
+    pub fn stream(
+        &self,
+        model: ProviderModelConfig,
+        system: String,
+        messages: Vec<ProviderMessage>,
+    ) -> Result<Arc<ProviderStream>, GooseError> {
+        self.handle.stream(model, system, messages)
+    }
 }
 
 /// A Databricks provider backed by Goose's native Databricks implementation.

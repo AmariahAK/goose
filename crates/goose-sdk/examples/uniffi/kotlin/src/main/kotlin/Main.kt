@@ -1,21 +1,16 @@
 import io.aaif.goose.MessageRole
 import io.aaif.goose.ProviderMessage
 import io.aaif.goose.ProviderModelConfig
-import io.aaif.goose.providers.databricks.DatabricksProvider
-import io.aaif.goose.providers.databricks.defaultModel
+import io.aaif.goose.providers.openai.OpenAiProvider
+import io.aaif.goose.providers.openai.defaultModel
 
 fun main() {
-    val host = System.getenv("DATABRICKS_HOST")
-    require(!host.isNullOrBlank()) {
-        "Set DATABRICKS_HOST before running this example."
+    val apiKey = System.getenv("OPENAI_API_KEY")
+    require(!apiKey.isNullOrBlank()) {
+        "Set OPENAI_API_KEY before running this example."
     }
 
-    val token = System.getenv("DATABRICKS_TOKEN")
-    require(!token.isNullOrBlank()) {
-        "Set DATABRICKS_TOKEN to a Databricks API token before running this example."
-    }
-
-    val provider = DatabricksProvider(host, token)
+    val provider = OpenAiProvider(apiKey)
     val model = ProviderModelConfig(modelName = defaultModel())
     val messages = listOf(
         ProviderMessage(
