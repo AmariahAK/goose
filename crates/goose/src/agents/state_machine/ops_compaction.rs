@@ -35,12 +35,14 @@ pub struct CompactionOperation {
     context_limit: usize,
     threshold: f64,
     manages_own_context: bool,
-    // The reactive retry budget lives on the op rather than being derived from
-    // the conversation: compaction erases the very error messages it recovers
-    // from (and appends a fresh user message), so a conversation-derived count
-    // resets to one on every cycle and the cap would never trip. Ops are
-    // constructed per reply, so this is naturally a per-reply budget.
-    reactive_compactions: AtomicUsize,
+    // Consecutive failed compact-retry cycles. The count lives on the op
+    // rather than being derived from the conversation: compaction erases the
+    // very error messages it recovers from (and appends a fresh user message),
+    // so a conversation-derived count resets to one on every cycle and the cap
+    // would never trip. Reset on a successful assistant turn — the retry
+    // working, not the compaction working, is what proves recovery — so a long
+    // run that keeps recovering never exhausts the budget.
+    failed_compact_retries: AtomicUsize,
 }
 
 impl CompactionOperation {
@@ -56,7 +58,7 @@ impl CompactionOperation {
             context_limit,
             threshold,
             manages_own_context,
-            reactive_compactions: AtomicUsize::new(0),
+            failed_compact_retries: AtomicUsize::new(0),
         }
     }
 
@@ -84,18 +86,25 @@ impl Operation for CompactionOperation {
             return Ok(OperationResult::NotApplicable(emit));
         }
 
+        let last = conversation.last();
+
+        if last.is_some_and(|m| m.role == rmcp::model::Role::Assistant && m.error_kind().is_none())
+        {
+            self.failed_compact_retries.store(0, Ordering::Relaxed);
+        }
+
         let reactive_context_error = matches!(
-            conversation.last().and_then(|m| m.error_kind()),
+            last.and_then(|m| m.error_kind()),
             Some(MessageErrorKind::ContextLengthExceeded)
         );
 
         // Reactive: the LLM op just appended a ContextLengthExceeded error.
         // Compact and retry, up to a cap, before letting ExitOnError take it.
         if reactive_context_error {
-            if self.reactive_compactions.load(Ordering::Relaxed) >= MAX_CONTEXT_ERROR_RETRIES {
+            if self.failed_compact_retries.load(Ordering::Relaxed) >= MAX_CONTEXT_ERROR_RETRIES {
                 return Ok(OperationResult::NotApplicable(emit));
             }
-            self.reactive_compactions.fetch_add(1, Ordering::Relaxed);
+            self.failed_compact_retries.fetch_add(1, Ordering::Relaxed);
         } else {
             // Proactive: a pending user turn whose recorded token total is over the
             // threshold. We compact before the doomed LLM call rather than after.

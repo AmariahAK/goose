@@ -499,6 +499,56 @@ async fn repeated_context_length_errors_stop_after_capped_retries() -> Result<()
 }
 
 #[tokio::test]
+async fn successful_turns_reset_the_compact_retry_budget() -> Result<()> {
+    use goose_providers::errors::ProviderError;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    // Three context errors in one reply, but each compaction is followed by a
+    // successful turn (a tool call that keeps the loop going). The failure
+    // budget resets on success, so the third compaction must still happen —
+    // the cap only stops *consecutive* failed compact-retry cycles.
+    let calls = Arc::new(AtomicUsize::new(0));
+    let calls_for_fn = calls.clone();
+    let provider = Arc::new(ScriptedProvider::from_fn_result(
+        move |_messages, _tools| {
+            let n = calls_for_fn.fetch_add(1, Ordering::SeqCst);
+            match n {
+                0 | 3 | 6 => Err(ProviderError::ContextLengthExceeded("too long".to_string())),
+                1 | 4 | 7 => Ok(vec![Message::assistant().with_text("summary")]),
+                8 => Ok(vec![Message::assistant().with_text("done")]),
+                _ => Ok(vec![Message::assistant().with_tool_request(
+                    format!("call_{n}"),
+                    Ok(rmcp::model::CallToolRequestParams::new("test__echo")
+                        .with_arguments(serde_json::Map::new())),
+                )]),
+            }
+        },
+    ));
+    let harness = TestHarness::with_provider(provider)
+        .await
+        .with_default_extension()
+        .await;
+
+    let events = harness.run_events("hello", 20).await?;
+
+    let replaced = events
+        .iter()
+        .filter(|e| matches!(e, AgentEvent::HistoryReplaced(_)))
+        .count();
+    assert_eq!(replaced, 3, "events: {events:#?}");
+
+    // (error, summary, retry) three times, ending in "done": 9 calls.
+    assert_eq!(harness.provider.call_count(), 9);
+
+    let persisted = harness.persisted_messages().await?;
+    let last = persisted.last().expect("a persisted message");
+    assert!(last.error_kind().is_none(), "tail still an error: {last:?}");
+    assert_eq!(last.as_concat_text(), "done");
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn context_length_error_triggers_compaction_recovery() -> Result<()> {
     use goose_providers::errors::ProviderError;
     use std::sync::atomic::{AtomicUsize, Ordering};
