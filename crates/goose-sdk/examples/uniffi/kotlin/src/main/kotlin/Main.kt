@@ -3,8 +3,10 @@ import io.aaif.goose.ProviderMessage
 import io.aaif.goose.ProviderModelConfig
 import io.aaif.goose.providers.openai.OpenAiProvider
 import io.aaif.goose.providers.openai.defaultModel
+import io.aaif.goose.providers.openai.streamFlow
+import kotlinx.coroutines.runBlocking
 
-fun main() {
+fun main() = runBlocking {
     val apiKey = System.getenv("OPENAI_API_KEY")
     require(!apiKey.isNullOrBlank()) {
         "Set OPENAI_API_KEY before running this example."
@@ -19,16 +21,15 @@ fun main() {
         ),
     )
 
-    val stream = provider.stream(
-        model,
-        "You are a knowledgeable geography expert.",
-        messages,
-    )
-
-    while (true) {
-        val chunk = stream.next() ?: break
-        chunk.text?.let { print(it) }
-        chunk.usageJson?.let { println("\nusage: $it") }
-    }
+    provider
+        .streamFlow(
+            model,
+            "You are a knowledgeable geography expert.",
+            messages,
+        )
+        .collect { chunk ->
+            chunk.text?.let { print(it) }
+            chunk.usageJson?.let { println("\nusage: $it") }
+        }
     println()
 }

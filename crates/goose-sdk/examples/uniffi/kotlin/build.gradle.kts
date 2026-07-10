@@ -14,6 +14,7 @@ fun gooseSdkVersion(): String {
 
 dependencies {
     implementation("io.github.aaif-goose:gdk:${gooseSdkVersion()}")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
 }
 
 kotlin {

@@ -4,7 +4,7 @@
 //! on declarative providers: consumers can construct a provider from JSON and
 //! stream completions from it.
 
-use std::sync::{Arc, Mutex};
+use std::{future::Future, sync::Arc, sync::OnceLock};
 
 use futures::StreamExt;
 use goose_providers::{
@@ -117,29 +117,54 @@ pub struct ProviderStreamChunk {
     pub usage_json: Option<String>,
 }
 
+static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+
+fn runtime() -> Result<&'static tokio::runtime::Runtime, GooseError> {
+    if let Some(runtime) = RUNTIME.get() {
+        return Ok(runtime);
+    }
+
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .map_err(|error| GooseError::Generic(error.to_string()))?;
+
+    let _ = RUNTIME.set(runtime);
+    Ok(RUNTIME.get().expect("runtime was initialized"))
+}
+
+async fn run_on_runtime<T>(
+    future: impl Future<Output = T> + Send + 'static,
+) -> Result<T, GooseError>
+where
+    T: Send + 'static,
+{
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    runtime()?.spawn(async move {
+        let _ = sender.send(future.await);
+    });
+
+    receiver
+        .await
+        .map_err(|_| GooseError::Generic("runtime task was cancelled".to_string()))
+}
+
 struct ProviderHandle {
-    provider: Box<dyn Provider>,
-    runtime: Arc<tokio::runtime::Runtime>,
+    provider: Arc<dyn Provider>,
 }
 
 impl ProviderHandle {
-    fn new(provider: Box<dyn Provider>) -> Result<Self, GooseError> {
-        let runtime = tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()
-            .map_err(|error| GooseError::Generic(error.to_string()))?;
-
-        Ok(Self {
-            provider,
-            runtime: Arc::new(runtime),
-        })
+    fn new(provider: Box<dyn Provider>) -> Self {
+        Self {
+            provider: Arc::from(provider),
+        }
     }
 
     fn name(&self) -> String {
         self.provider.get_name().to_string()
     }
 
-    fn stream(
+    async fn stream(
         &self,
         model: ProviderModelConfig,
         system: String,
@@ -150,13 +175,13 @@ impl ProviderHandle {
             .iter()
             .map(ProviderMessage::to_goose_message)
             .collect::<Vec<_>>();
+        let provider = Arc::clone(&self.provider);
         let stream =
-            self.runtime
-                .block_on(self.provider.stream(&model, &system, &messages, &[]))?;
+            run_on_runtime(async move { provider.stream(&model, &system, &messages, &[]).await })
+                .await??;
 
         Ok(Arc::new(ProviderStream {
-            stream: Mutex::new(stream),
-            runtime: Arc::clone(&self.runtime),
+            stream: Arc::new(tokio::sync::Mutex::new(stream)),
         }))
     }
 }
@@ -175,7 +200,7 @@ impl DeclarativeProvider {
     pub fn from_json(json: String) -> Result<Arc<Self>, GooseError> {
         let provider = goose_providers::declarative::from_json(&json, None, EnvKeyResolver {})?;
         Ok(Arc::new(Self {
-            handle: ProviderHandle::new(provider)?,
+            handle: ProviderHandle::new(provider),
         }))
     }
 
@@ -185,13 +210,13 @@ impl DeclarativeProvider {
 
     /// Start a streaming completion request. Tools are not yet exposed over the
     /// uniffi boundary, so this calls providers with an empty tool list.
-    pub fn stream(
+    pub async fn stream(
         &self,
         model: ProviderModelConfig,
         system: String,
         messages: Vec<ProviderMessage>,
     ) -> Result<Arc<ProviderStream>, GooseError> {
-        self.handle.stream(model, system, messages)
+        self.handle.stream(model, system, messages).await
     }
 }
 
@@ -224,7 +249,7 @@ impl OpenAiProvider {
         let provider = OpenAiProviderBuilder::new(api_client).build();
 
         Ok(Arc::new(Self {
-            handle: ProviderHandle::new(Box::new(provider))?,
+            handle: ProviderHandle::new(Box::new(provider)),
         }))
     }
 
@@ -234,13 +259,13 @@ impl OpenAiProvider {
 
     /// Start a streaming completion request. Tools are not yet exposed over the
     /// uniffi boundary, so this calls providers with an empty tool list.
-    pub fn stream(
+    pub async fn stream(
         &self,
         model: ProviderModelConfig,
         system: String,
         messages: Vec<ProviderMessage>,
     ) -> Result<Arc<ProviderStream>, GooseError> {
-        self.handle.stream(model, system, messages)
+        self.handle.stream(model, system, messages).await
     }
 }
 
@@ -271,7 +296,7 @@ impl DatabricksProvider {
         )?;
 
         Ok(Arc::new(Self {
-            handle: ProviderHandle::new(Box::new(provider))?,
+            handle: ProviderHandle::new(Box::new(provider)),
         }))
     }
 
@@ -281,45 +306,44 @@ impl DatabricksProvider {
 
     /// Start a streaming completion request. Tools are not yet exposed over the
     /// uniffi boundary, so this calls providers with an empty tool list.
-    pub fn stream(
+    pub async fn stream(
         &self,
         model: ProviderModelConfig,
         system: String,
         messages: Vec<ProviderMessage>,
     ) -> Result<Arc<ProviderStream>, GooseError> {
-        self.handle.stream(model, system, messages)
+        self.handle.stream(model, system, messages).await
     }
 }
 
-/// A blocking iterator over provider stream chunks.
+/// An async iterator over provider stream chunks.
 #[derive(uniffi::Object)]
 pub struct ProviderStream {
-    stream: Mutex<MessageStream>,
-    runtime: Arc<tokio::runtime::Runtime>,
+    stream: Arc<tokio::sync::Mutex<MessageStream>>,
 }
 
 #[uniffi::export]
 impl ProviderStream {
     /// Return the next stream chunk, or `None` when the stream is exhausted.
-    pub fn next(&self) -> Result<Option<ProviderStreamChunk>, GooseError> {
-        let mut stream = self
-            .stream
-            .lock()
-            .map_err(|_| GooseError::Generic("provider stream lock poisoned".to_string()))?;
+    pub async fn next(&self) -> Result<Option<ProviderStreamChunk>, GooseError> {
+        let stream = Arc::clone(&self.stream);
+        run_on_runtime(async move {
+            let mut stream = stream.lock().await;
+            let Some((message, usage)) = stream.next().await.transpose()? else {
+                return Ok(None);
+            };
 
-        let Some((message, usage)) = self.runtime.block_on(stream.next()).transpose()? else {
-            return Ok(None);
-        };
+            let text = message.as_ref().map(Message::as_concat_text);
+            let message_json = message.as_ref().map(serde_json::to_string).transpose()?;
+            let usage_json = usage.as_ref().map(serde_json::to_string).transpose()?;
 
-        let text = message.as_ref().map(Message::as_concat_text);
-        let message_json = message.as_ref().map(serde_json::to_string).transpose()?;
-        let usage_json = usage.as_ref().map(serde_json::to_string).transpose()?;
-
-        Ok(Some(ProviderStreamChunk {
-            text,
-            message_json,
-            usage_json,
-        }))
+            Ok(Some(ProviderStreamChunk {
+                text,
+                message_json,
+                usage_json,
+            }))
+        })
+        .await?
     }
 }
 
