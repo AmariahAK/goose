@@ -9,7 +9,7 @@ use std::{future::Future, sync::Arc, sync::OnceLock};
 use futures::StreamExt;
 use goose_providers::{
     api_client::{ApiClient, AuthMethod},
-    base::{MessageStream, Provider},
+    base::{MessageStream, Provider as GooseProvider},
     conversation::message::Message,
     databricks::DatabricksProvider as GooseDatabricksProvider,
     databricks_auth::DatabricksAuth,
@@ -150,11 +150,11 @@ where
 }
 
 struct ProviderHandle {
-    provider: Arc<dyn Provider>,
+    provider: Arc<dyn GooseProvider>,
 }
 
 impl ProviderHandle {
-    fn new(provider: Box<dyn Provider>) -> Self {
+    fn new(provider: Box<dyn GooseProvider>) -> Self {
         Self {
             provider: Arc::from(provider),
         }
@@ -186,24 +186,22 @@ impl ProviderHandle {
     }
 }
 
-/// A declarative Goose provider constructed from provider JSON.
+/// A Goose provider backed by one of Goose's native provider implementations.
 #[derive(uniffi::Object)]
-pub struct DeclarativeProvider {
+pub struct Provider {
     handle: ProviderHandle,
 }
 
-#[uniffi::export]
-impl DeclarativeProvider {
-    /// Construct a declarative provider using the process environment to resolve
-    /// configured API key environment variables.
-    #[uniffi::constructor]
-    pub fn from_json(json: String) -> Result<Arc<Self>, GooseError> {
-        let provider = goose_providers::declarative::from_json(&json, None, EnvKeyResolver {})?;
-        Ok(Arc::new(Self {
+impl Provider {
+    fn new(provider: Box<dyn GooseProvider>) -> Arc<Self> {
+        Arc::new(Self {
             handle: ProviderHandle::new(provider),
-        }))
+        })
     }
+}
 
+#[uniffi::export]
+impl Provider {
     pub fn name(&self) -> String {
         self.handle.name()
     }
@@ -218,6 +216,12 @@ impl DeclarativeProvider {
     ) -> Result<Arc<ProviderStream>, GooseError> {
         self.handle.stream(model, system, messages).await
     }
+}
+
+#[uniffi::export]
+pub fn declarative_provider_from_json(json: String) -> Result<Arc<Provider>, GooseError> {
+    let provider = goose_providers::declarative::from_json(&json, None, EnvKeyResolver {})?;
+    Ok(Provider::new(provider))
 }
 
 #[uniffi::export]
@@ -226,94 +230,38 @@ pub fn openai_default_model() -> String {
 }
 
 #[uniffi::export]
+pub fn openai_provider(api_key: String) -> Result<Arc<Provider>, GooseError> {
+    let api_client = ApiClient::new_with_tls(
+        "https://api.openai.com".to_string(),
+        AuthMethod::BearerToken(api_key),
+        None,
+    )?;
+    let provider = OpenAiProviderBuilder::new(api_client).build();
+    Ok(Provider::new(Box::new(provider)))
+}
+
+#[uniffi::export]
 pub fn databricks_default_model() -> String {
     goose_providers::databricks::DATABRICKS_DEFAULT_MODEL.to_string()
 }
 
-/// An OpenAI provider backed by Goose's native OpenAI implementation.
-#[derive(uniffi::Object)]
-pub struct OpenAiProvider {
-    handle: ProviderHandle,
-}
-
 #[uniffi::export]
-impl OpenAiProvider {
-    /// Construct an OpenAI provider using the default OpenAI API host.
-    #[uniffi::constructor]
-    pub fn new(api_key: String) -> Result<Arc<Self>, GooseError> {
-        let api_client = ApiClient::new_with_tls(
-            "https://api.openai.com".to_string(),
-            AuthMethod::BearerToken(api_key),
-            None,
-        )?;
-        let provider = OpenAiProviderBuilder::new(api_client).build();
+pub fn databricks_provider(host: String, token: String) -> Result<Arc<Provider>, GooseError> {
+    let retry_config = GooseDatabricksProvider::load_retry_config(|key| std::env::var(key).ok());
+    let provider = GooseDatabricksProvider::new(
+        host,
+        DatabricksAuth::token(token),
+        retry_config,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+    )?;
 
-        Ok(Arc::new(Self {
-            handle: ProviderHandle::new(Box::new(provider)),
-        }))
-    }
-
-    pub fn name(&self) -> String {
-        self.handle.name()
-    }
-
-    /// Start a streaming completion request. Tools are not yet exposed over the
-    /// uniffi boundary, so this calls providers with an empty tool list.
-    pub async fn stream(
-        &self,
-        model: ProviderModelConfig,
-        system: String,
-        messages: Vec<ProviderMessage>,
-    ) -> Result<Arc<ProviderStream>, GooseError> {
-        self.handle.stream(model, system, messages).await
-    }
-}
-
-/// A Databricks provider backed by Goose's native Databricks implementation.
-#[derive(uniffi::Object)]
-pub struct DatabricksProvider {
-    handle: ProviderHandle,
-}
-
-#[uniffi::export]
-impl DatabricksProvider {
-    /// Construct a Databricks provider using a workspace host and API token.
-    #[uniffi::constructor]
-    pub fn new(host: String, token: String) -> Result<Arc<Self>, GooseError> {
-        let retry_config =
-            GooseDatabricksProvider::load_retry_config(|key| std::env::var(key).ok());
-        let provider = GooseDatabricksProvider::new(
-            host,
-            DatabricksAuth::token(token),
-            retry_config,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-        )?;
-
-        Ok(Arc::new(Self {
-            handle: ProviderHandle::new(Box::new(provider)),
-        }))
-    }
-
-    pub fn name(&self) -> String {
-        self.handle.name()
-    }
-
-    /// Start a streaming completion request. Tools are not yet exposed over the
-    /// uniffi boundary, so this calls providers with an empty tool list.
-    pub async fn stream(
-        &self,
-        model: ProviderModelConfig,
-        system: String,
-        messages: Vec<ProviderMessage>,
-    ) -> Result<Arc<ProviderStream>, GooseError> {
-        self.handle.stream(model, system, messages).await
-    }
+    Ok(Provider::new(Box::new(provider)))
 }
 
 /// An async iterator over provider stream chunks.
