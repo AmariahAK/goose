@@ -43,7 +43,7 @@ kotlin: (_generate "kotlin")
             https://repo1.maven.org/maven2/net/java/dev/jna/jna/5.14.0/jna-5.14.0.jar; \
     fi
     kotlinc -cp {{examples_dir}}/jna.jar -nowarn \
-        {{gen_dir}}/io/aaif/goose/goose.kt \
+        {{gen_dir}}/io/github/aaif_goose/goose.kt \
         {{examples_dir}}/Provider.kt \
         -include-runtime -d {{examples_dir}}/provider.jar 2>/dev/null
     java -Djna.library.path={{debug_lib_dir}} \

@@ -1,9 +1,9 @@
-import io.aaif.goose.MessageRole
-import io.aaif.goose.ProviderMessage
-import io.aaif.goose.ProviderModelConfig
-import io.aaif.goose.providers.openai.OpenAiProvider
-import io.aaif.goose.providers.openai.defaultModel
-import io.aaif.goose.providers.openai.streamFlow
+import io.github.aaif_goose.MessageRole
+import io.github.aaif_goose.ProviderMessage
+import io.github.aaif_goose.ProviderModelConfig
+import io.github.aaif_goose.streamFlow
+import io.github.aaif_goose.providers.openai.defaultModel
+import io.github.aaif_goose.providers.openai.provider as openAiProvider
 import kotlinx.coroutines.runBlocking
 
 fun main() = runBlocking {
@@ -12,7 +12,7 @@ fun main() = runBlocking {
         "Set OPENAI_API_KEY before running this example."
     }
 
-    val provider = OpenAiProvider(apiKey)
+    val provider = openAiProvider(apiKey)
     val model = ProviderModelConfig(modelName = defaultModel())
     val messages = listOf(
         ProviderMessage(

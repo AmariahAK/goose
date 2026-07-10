@@ -86,9 +86,9 @@ gooseselftest/
 .tasks/
 
 # Generated goose-sdk Maven bindings and native libraries
-/crates/goose-sdk/maven/src/main/kotlin/io/aaif/goose/
-/crates/goose-sdk/maven/src/main/resources/
+/crates/goose-sdk/maven/src/main/
 /crates/goose-sdk/maven/.gradle/
+/crates/goose-sdk/maven/.kotlin/
 /crates/goose-sdk/maven/build/
 
 # Generated goose-sdk Kotlin example build artifacts

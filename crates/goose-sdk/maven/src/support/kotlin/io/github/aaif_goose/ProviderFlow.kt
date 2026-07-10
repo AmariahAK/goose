@@ -1,4 +1,4 @@
-package io.aaif.goose
+package io.github.aaif_goose
 
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
