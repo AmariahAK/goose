@@ -16,12 +16,15 @@ fun gooseSdkVersion(): String {
 }
 
 kotlin {
-    jvmToolchain(11)
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_11)
+    }
 }
 
 java {
+    sourceCompatibility = JavaVersion.VERSION_11
+    targetCompatibility = JavaVersion.VERSION_11
     withSourcesJar()
-    withJavadocJar()
 }
 
 dependencies {
@@ -35,6 +38,10 @@ tasks.jar {
             "Implementation-Version" to project.version,
         )
     }
+}
+
+tasks.withType<GenerateModuleMetadata>().configureEach {
+    dependsOn(tasks.named("plainJavadocJar"))
 }
 
 mavenPublishing {

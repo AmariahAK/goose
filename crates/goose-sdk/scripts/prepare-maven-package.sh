@@ -42,7 +42,7 @@ cp LICENSE "$maven_dir/src/main/resources/META-INF/LICENSE"
 cat > "$kotlin_dir/io/aaif/goose/NativeLibraryLoader.kt" <<'KOTLIN'
 package io.aaif.goose
 
-import com.sun.jna.Native
+import com.sun.jna.Platform
 import java.nio.file.Files
 
 internal object NativeLibraryLoader {
@@ -79,10 +79,10 @@ internal object NativeLibraryLoader {
         else -> System.getProperty("os.name").lowercase().replace(Regex("\\s+"), "-")
     }
 
-    private fun archName(): String = when (val arch = Native.ARCH) {
-        "aarch64" -> "aarch64"
-        "x86-64" -> "x86-64"
-        else -> arch
+    private fun archName(): String = when {
+        Platform.isARM() && Platform.is64Bit() -> "aarch64"
+        Platform.isIntel() && Platform.is64Bit() -> "x86-64"
+        else -> System.getProperty("os.arch")
     }
 }
 KOTLIN
