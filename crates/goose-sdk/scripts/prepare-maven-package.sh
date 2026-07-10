@@ -99,4 +99,13 @@ if needle not in text:
 path.write_text(text.replace(needle, replacement, 1))
 PY
 
+mkdir -p "$kotlin_dir/io/aaif/goose/providers/databricks"
+cat > "$kotlin_dir/io/aaif/goose/providers/databricks/Databricks.kt" <<'KOTLIN'
+package io.aaif.goose.providers.databricks
+
+public typealias DatabricksProvider = io.aaif.goose.DatabricksProvider
+
+public fun defaultModel(): String = io.aaif.goose.databricksDefaultModel()
+KOTLIN
+
 cp "$native_lib" "$resources_dir/$resource_prefix/"

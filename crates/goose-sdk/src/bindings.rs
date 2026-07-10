@@ -10,6 +10,8 @@ use futures::StreamExt;
 use goose_providers::{
     base::{MessageStream, Provider},
     conversation::message::Message,
+    databricks::DatabricksProvider as GooseDatabricksProvider,
+    databricks_auth::DatabricksAuth,
     declarative::EnvKeyResolver,
     model::ModelConfig,
 };
@@ -113,43 +115,34 @@ pub struct ProviderStreamChunk {
     pub usage_json: Option<String>,
 }
 
-/// A declarative Goose provider constructed from provider JSON.
-#[derive(uniffi::Object)]
-pub struct DeclarativeProvider {
+struct ProviderHandle {
     provider: Box<dyn Provider>,
     runtime: Arc<tokio::runtime::Runtime>,
 }
 
-#[uniffi::export]
-impl DeclarativeProvider {
-    /// Construct a declarative provider using the process environment to resolve
-    /// configured API key environment variables.
-    #[uniffi::constructor]
-    pub fn from_json(json: String) -> Result<Arc<Self>, GooseError> {
-        let provider = goose_providers::declarative::from_json(&json, None, EnvKeyResolver {})?;
+impl ProviderHandle {
+    fn new(provider: Box<dyn Provider>) -> Result<Self, GooseError> {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
             .map_err(|error| GooseError::Generic(error.to_string()))?;
 
-        Ok(Arc::new(Self {
+        Ok(Self {
             provider,
             runtime: Arc::new(runtime),
-        }))
+        })
     }
 
-    pub fn name(&self) -> String {
+    fn name(&self) -> String {
         self.provider.get_name().to_string()
     }
 
-    /// Start a streaming completion request. Tools are not yet exposed over the
-    /// uniffi boundary, so this calls providers with an empty tool list.
-    pub fn stream(
+    fn stream(
         &self,
         model: ProviderModelConfig,
         system: String,
         messages: Vec<ProviderMessage>,
-    ) -> Result<Arc<DeclarativeProviderStream>, GooseError> {
+    ) -> Result<Arc<ProviderStream>, GooseError> {
         let model = model.to_goose_model_config()?;
         let messages = messages
             .iter()
@@ -159,22 +152,108 @@ impl DeclarativeProvider {
             self.runtime
                 .block_on(self.provider.stream(&model, &system, &messages, &[]))?;
 
-        Ok(Arc::new(DeclarativeProviderStream {
+        Ok(Arc::new(ProviderStream {
             stream: Mutex::new(stream),
             runtime: Arc::clone(&self.runtime),
         }))
     }
 }
 
+/// A declarative Goose provider constructed from provider JSON.
+#[derive(uniffi::Object)]
+pub struct DeclarativeProvider {
+    handle: ProviderHandle,
+}
+
+#[uniffi::export]
+impl DeclarativeProvider {
+    /// Construct a declarative provider using the process environment to resolve
+    /// configured API key environment variables.
+    #[uniffi::constructor]
+    pub fn from_json(json: String) -> Result<Arc<Self>, GooseError> {
+        let provider = goose_providers::declarative::from_json(&json, None, EnvKeyResolver {})?;
+        Ok(Arc::new(Self {
+            handle: ProviderHandle::new(provider)?,
+        }))
+    }
+
+    pub fn name(&self) -> String {
+        self.handle.name()
+    }
+
+    /// Start a streaming completion request. Tools are not yet exposed over the
+    /// uniffi boundary, so this calls providers with an empty tool list.
+    pub fn stream(
+        &self,
+        model: ProviderModelConfig,
+        system: String,
+        messages: Vec<ProviderMessage>,
+    ) -> Result<Arc<ProviderStream>, GooseError> {
+        self.handle.stream(model, system, messages)
+    }
+}
+
+#[uniffi::export]
+pub fn databricks_default_model() -> String {
+    goose_providers::databricks::DATABRICKS_DEFAULT_MODEL.to_string()
+}
+
+/// A Databricks provider backed by Goose's native Databricks implementation.
+#[derive(uniffi::Object)]
+pub struct DatabricksProvider {
+    handle: ProviderHandle,
+}
+
+#[uniffi::export]
+impl DatabricksProvider {
+    /// Construct a Databricks provider using a workspace host and API token.
+    #[uniffi::constructor]
+    pub fn new(host: String, token: String) -> Result<Arc<Self>, GooseError> {
+        let retry_config =
+            GooseDatabricksProvider::load_retry_config(|key| std::env::var(key).ok());
+        let provider = GooseDatabricksProvider::new(
+            host,
+            DatabricksAuth::token(token),
+            retry_config,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )?;
+
+        Ok(Arc::new(Self {
+            handle: ProviderHandle::new(Box::new(provider))?,
+        }))
+    }
+
+    pub fn name(&self) -> String {
+        self.handle.name()
+    }
+
+    /// Start a streaming completion request. Tools are not yet exposed over the
+    /// uniffi boundary, so this calls providers with an empty tool list.
+    pub fn stream(
+        &self,
+        model: ProviderModelConfig,
+        system: String,
+        messages: Vec<ProviderMessage>,
+    ) -> Result<Arc<ProviderStream>, GooseError> {
+        self.handle.stream(model, system, messages)
+    }
+}
+
 /// A blocking iterator over provider stream chunks.
 #[derive(uniffi::Object)]
-pub struct DeclarativeProviderStream {
+pub struct ProviderStream {
     stream: Mutex<MessageStream>,
     runtime: Arc<tokio::runtime::Runtime>,
 }
 
 #[uniffi::export]
-impl DeclarativeProviderStream {
+impl ProviderStream {
     /// Return the next stream chunk, or `None` when the stream is exhausted.
     pub fn next(&self) -> Result<Option<ProviderStreamChunk>, GooseError> {
         let mut stream = self

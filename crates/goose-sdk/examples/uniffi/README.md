@@ -27,6 +27,18 @@ DYLD_LIBRARY_PATH=target/debug LD_LIBRARY_PATH=target/debug \
   uv run --script crates/goose-sdk/examples/uniffi/provider.py
 ```
 
+## Kotlin/JVM Maven smoke test
+
+Build the local Maven artifact and run the downstream smoke test app:
+
+```bash
+export DATABRICKS_HOST=https://dbc-xxxxxxxx-xxxx.cloud.databricks.com
+export DATABRICKS_TOKEN=...
+just --justfile crates/goose-sdk/justfile maven-package
+cd crates/goose-sdk/examples/uniffi/kotlin
+gradle --no-daemon run
+```
+
 ## Kotlin provider example
 
 Download JNA if it is not already present:
