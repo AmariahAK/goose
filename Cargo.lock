@@ -9368,9 +9368,9 @@ dependencies = [
 
 [[package]]
 name = "safemlx-lm"
-version = "0.4.0"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d52d380397b98a382399a0a8754d81c52b2d65d9310c64fb634307396f5a084d"
+checksum = "10021db1789b1707952ae7e952c81eafd5b7b2a81e34eb47719f2a182671d4db"
 dependencies = [
  "anyhow",
  "clap",
