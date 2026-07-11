@@ -6,7 +6,14 @@ mod imp {
     use safemlx::transforms::eval;
     use safemlx::{random, Array, Device, DeviceType, Stream};
     use safemlx_lm::gemma4_mtp::generate_gemma4_mtp;
-    use safemlx_lm::models::{gemma4_assistant::load_gemma4_assistant_model, LoadedModel, Model};
+    use safemlx_lm::models::{
+        gemma4_assistant::load_gemma4_assistant_model,
+        input::{InputPart, ModelInput},
+        LoadedModel, Model,
+    };
+    use safemlx_lm::processor::{
+        MediaInput as MlxMediaInput, PreparedModelInput, ProcessorInput, RgbImageView,
+    };
     use safemlx_lm_utils::tokenizer::{Chat, Conversation, Role, Tokenizer};
     use serde_json::json;
 
@@ -105,11 +112,19 @@ mod imp {
                     },
                 }
             };
+            let media_prompt = mlx_media_prompt(&loaded.model, request.messages)?;
+            let has_media = media_prompt.has_media();
+            ensure_mlx_image_support(
+                loaded.model.model_type(),
+                has_media,
+                loaded.model.has_processor(),
+            )?;
+            let effective_messages = media_prompt.messages.as_deref().unwrap_or(request.messages);
             let prompt = build_prompt(
                 &mut loaded.model,
                 &request.model_name,
                 request.system,
-                request.messages,
+                effective_messages,
                 request.tools,
                 tool_mode,
             )?;
@@ -121,6 +136,25 @@ mod imp {
                 )));
             }
 
+            let prepared_input = if has_media {
+                let decoded_images = decode_mlx_images(&media_prompt.images)?;
+                let media = mlx_media_inputs(&decoded_images)?;
+                let marker = mlx_image_marker(loaded.model.model_type()).ok_or_else(|| {
+                    mlx_error(format!(
+                        "MLX model type '{}' does not define an image marker",
+                        loaded.model.model_type()
+                    ))
+                })?;
+                let processor_input = mlx_processor_inputs(&prompt, marker, &media)?;
+                Some(
+                    loaded
+                        .model
+                        .prepare_input(&processor_input)
+                        .map_err(mlx_error)?,
+                )
+            } else {
+                None
+            };
             let prompt_array = loaded
                 .model
                 .encode_to_array(&prompt, false, &stream)
@@ -143,7 +177,7 @@ mod imp {
                 time_to_first_token_ms,
                 streamed_response,
             } = if let Some(draft_model_path) = &request.draft_model_path {
-                if matches!(loaded.model.model_mut(), Model::Gemma4(_)) {
+                if !has_media && matches!(loaded.model.model_mut(), Model::Gemma4(_)) {
                     let weights_stream = Stream::new_with_device(&Device::new(DeviceType::Cpu, 0));
                     let mut assistant =
                         load_gemma4_assistant_model(draft_model_path, &stream, &weights_stream)
@@ -184,7 +218,7 @@ mod imp {
                     generate_single_model(
                         &mut loaded.model,
                         &loaded.tokenizer,
-                        &prompt_array,
+                        mlx_generation_input(&prompt_array, prepared_input.as_ref()),
                         &eos_token_ids,
                         max_tokens,
                         temp,
@@ -204,7 +238,7 @@ mod imp {
                 generate_single_model(
                     &mut loaded.model,
                     &loaded.tokenizer,
-                    &prompt_array,
+                    mlx_generation_input(&prompt_array, prepared_input.as_ref()),
                     &eos_token_ids,
                     max_tokens,
                     temp,
@@ -266,6 +300,28 @@ mod imp {
         fn available_memory_bytes(&self) -> u64 {
             0
         }
+    }
+
+    struct MlxMediaPrompt {
+        images: Vec<crate::multimodal::ExtractedImage>,
+        messages: Option<Vec<Message>>,
+    }
+
+    impl MlxMediaPrompt {
+        fn has_media(&self) -> bool {
+            !self.images.is_empty()
+        }
+    }
+
+    struct MlxDecodedImage {
+        pixels: Vec<u8>,
+        width: u32,
+        height: u32,
+    }
+
+    enum MlxPromptInput<'a> {
+        Text(&'a Array),
+        Prepared(&'a PreparedModelInput),
     }
 
     #[derive(Clone, Copy)]
@@ -344,6 +400,122 @@ mod imp {
             .unwrap_or_default()
     }
 
+    fn mlx_media_prompt(
+        model: &LoadedModel,
+        messages: &[Message],
+    ) -> Result<MlxMediaPrompt, ProviderError> {
+        let Some(marker) = mlx_image_marker(model.model_type()) else {
+            return Ok(MlxMediaPrompt {
+                images: Vec::new(),
+                messages: None,
+            });
+        };
+        Ok(mlx_media_prompt_with_marker(messages, marker))
+    }
+
+    fn mlx_media_prompt_with_marker(messages: &[Message], marker: &str) -> MlxMediaPrompt {
+        let (images, messages) = crate::multimodal::extract_images_from_messages(messages, marker);
+        MlxMediaPrompt {
+            messages: (!images.is_empty()).then_some(messages),
+            images,
+        }
+    }
+
+    fn ensure_mlx_image_support(
+        model_type: &str,
+        has_media: bool,
+        has_processor: bool,
+    ) -> Result<(), ProviderError> {
+        if has_media && !has_processor {
+            return Err(ProviderError::ExecutionError(format!(
+                "MLX model type '{}' does not support image input. Select a multimodal MLX model with processor metadata.",
+                model_type
+            )));
+        }
+        Ok(())
+    }
+
+    fn mlx_image_marker(model_type: &str) -> Option<&'static str> {
+        match model_type {
+            "gemma4" | "gemma4_text" | "gemma4_unified" | "gemma4_unified_text" => Some("<|image>"),
+            "qwen3_5_moe" | "qwen3_5_moe_text" => Some("<|image_pad|>"),
+            _ => None,
+        }
+    }
+
+    fn decode_mlx_images(
+        images: &[crate::multimodal::ExtractedImage],
+    ) -> Result<Vec<MlxDecodedImage>, ProviderError> {
+        images
+            .iter()
+            .map(|image| {
+                let decoded = image::load_from_memory(&image.bytes)
+                    .map_err(|error| mlx_error(format!("failed to decode image: {error}")))?
+                    .to_rgb8();
+                let (width, height) = decoded.dimensions();
+                Ok(MlxDecodedImage {
+                    pixels: decoded.into_raw(),
+                    width,
+                    height,
+                })
+            })
+            .collect()
+    }
+
+    fn mlx_media_inputs(
+        images: &[MlxDecodedImage],
+    ) -> Result<Vec<MlxMediaInput<'_>>, ProviderError> {
+        images
+            .iter()
+            .map(|image| {
+                RgbImageView::packed(&image.pixels, image.width, image.height)
+                    .map(MlxMediaInput::image_rgb8)
+                    .map_err(mlx_error)
+            })
+            .collect()
+    }
+
+    fn mlx_processor_inputs<'a>(
+        prompt: &'a str,
+        marker: &str,
+        media: &'a [MlxMediaInput<'a>],
+    ) -> Result<Vec<ProcessorInput<'a>>, ProviderError> {
+        let mut inputs = Vec::with_capacity(media.len().saturating_mul(2).saturating_add(1));
+        let mut rest = prompt;
+        for item in media {
+            let Some((before, after)) = rest.split_once(marker) else {
+                return Err(mlx_error(format!(
+                    "MLX prompt contains fewer image markers than attached images: expected {}",
+                    media.len()
+                )));
+            };
+            if !before.is_empty() {
+                inputs.push(ProcessorInput::Text(before));
+            }
+            inputs.push(ProcessorInput::Media(*item));
+            rest = after;
+        }
+        if rest.contains(marker) {
+            return Err(mlx_error(
+                "MLX prompt contains more image markers than attached images",
+            ));
+        }
+        if !rest.is_empty() {
+            inputs.push(ProcessorInput::Text(rest));
+        }
+        Ok(inputs)
+    }
+
+    fn mlx_generation_input<'a>(
+        prompt_array: &'a Array,
+        prepared_input: Option<&'a PreparedModelInput>,
+    ) -> MlxPromptInput<'a> {
+        match prepared_input {
+            Some(prepared_input) => MlxPromptInput::Prepared(prepared_input),
+            None => MlxPromptInput::Text(prompt_array),
+        }
+    }
+
     fn build_prompt(
         model: &mut LoadedModel,
         model_name: &str,
@@ -419,7 +591,7 @@ mod imp {
     fn generate_single_model(
         model: &mut LoadedModel,
         tokenizer: &Tokenizer,
-        prompt_array: &Array,
+        prompt_input: MlxPromptInput<'_>,
         eos_token_ids: &[u32],
         max_tokens: usize,
         temp: f32,
@@ -435,30 +607,77 @@ mod imp {
         let stream_generation = emitter.can_stream();
         let mut decode_stream = tokenizer.decode_stream(true);
         {
-            let generator = model
-                .generate_with_cache(&mut cache, temp, prompt_array, prng_key, stream)
-                .take(max_tokens);
-            for token in generator {
-                let token = token.map_err(mlx_error)?;
-                eval([&token]).map_err(mlx_error)?;
-                let token_id = token.item::<u32>(stream);
-                time_to_first_token_ms.get_or_insert_with(|| {
-                    u64::try_from(generation_started.elapsed().as_millis()).unwrap_or(u64::MAX)
-                });
-                if eos_token_ids.contains(&token_id) {
-                    break;
-                }
-                generated_ids.push(token_id);
-                if stream_generation {
-                    if let Some(piece) = decode_stream.step(token_id).map_err(mlx_error)? {
-                        if !piece.is_empty() {
-                            let should_continue = emitter.push_text(&piece)?;
-                            streamed_text.push_str(&piece);
-                            if !should_continue {
-                                break;
+            match prompt_input {
+                MlxPromptInput::Text(prompt_array) => {
+                    let prompt_part = InputPart::text_token_ids(prompt_array);
+                    let input_parts = [prompt_part];
+                    let generator = model
+                        .generate_input_with_cache(
+                            &mut cache,
+                            temp,
+                            ModelInput::new(&input_parts),
+                            prng_key,
+                            stream,
+                        )
+                        .take(max_tokens);
+                    for token in generator {
+                        let token = token.map_err(mlx_error)?;
+                        eval([&token]).map_err(mlx_error)?;
+                        let token_id = token.item::<u32>(stream);
+                        time_to_first_token_ms.get_or_insert_with(|| {
+                            u64::try_from(generation_started.elapsed().as_millis())
+                                .unwrap_or(u64::MAX)
+                        });
+                        if eos_token_ids.contains(&token_id) {
+                            break;
+                        }
+                        generated_ids.push(token_id);
+                        if stream_generation {
+                            if let Some(piece) = decode_stream.step(token_id).map_err(mlx_error)? {
+                                if !piece.is_empty() {
+                                    let should_continue = emitter.push_text(&piece)?;
+                                    streamed_text.push_str(&piece);
+                                    if !should_continue {
+                                        break;
+                                    }
+                                }
                             }
                         }
                     }
+                }
+                MlxPromptInput::Prepared(prepared_input) => {
+                    prepared_input.with_model_input(|input| {
+                        let generator = model
+                            .generate_input_with_cache(&mut cache, temp, input, prng_key, stream)
+                            .take(max_tokens);
+                        for token in generator {
+                            let token = token.map_err(mlx_error)?;
+                            eval([&token]).map_err(mlx_error)?;
+                            let token_id = token.item::<u32>(stream);
+                            time_to_first_token_ms.get_or_insert_with(|| {
+                                u64::try_from(generation_started.elapsed().as_millis())
+                                    .unwrap_or(u64::MAX)
+                            });
+                            if eos_token_ids.contains(&token_id) {
+                                break;
+                            }
+                            generated_ids.push(token_id);
+                            if stream_generation {
+                                if let Some(piece) =
+                                    decode_stream.step(token_id).map_err(mlx_error)?
+                                {
+                                    if !piece.is_empty() {
+                                        let should_continue = emitter.push_text(&piece)?;
+                                        streamed_text.push_str(&piece);
+                                        if !should_continue {
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        Ok::<(), ProviderError>(())
+                    })?;
                 }
             }
         }
@@ -908,9 +1127,13 @@ mod imp {
     #[cfg(test)]
     mod tests {
         use super::{
-            final_stream_suffix, mlx_max_tokens, split_generated_thinking, token_id_or_ids,
+            ensure_mlx_image_support, final_stream_suffix, mlx_max_tokens,
+            mlx_media_prompt_with_marker, mlx_processor_inputs, split_generated_thinking,
+            token_id_or_ids, MlxMediaInput, RgbImageView,
         };
         use crate::local_model_registry::ModelSettings;
+        use goose_provider_types::conversation::message::{Message, MessageContent};
+        use safemlx_lm::processor::ProcessorInput;
         use serde_json::json;
 
         #[test]
@@ -968,6 +1191,79 @@ mod imp {
         #[test]
         fn final_stream_suffix_rejects_rewritten_streamed_prefix() {
             assert!(final_stream_suffix("corrected response", "stale prefix").is_err());
+        }
+
+        #[test]
+        fn media_prompt_replaces_images_without_reordering_text() {
+            let messages = vec![Message::user()
+                .with_text("before")
+                .with_image("aGVsbG8=", "image/png")
+                .with_text("after")];
+
+            let prompt = mlx_media_prompt_with_marker(&messages, "<|image>");
+
+            assert_eq!(prompt.images.len(), 1);
+            let rewritten = prompt.messages.unwrap();
+            assert_eq!(rewritten.len(), 1);
+            assert!(matches!(
+                &rewritten[0].content[..],
+                [
+                    MessageContent::Text(before),
+                    MessageContent::Text(marker),
+                    MessageContent::Text(after)
+                ] if before.text == "before" && marker.text == "<|image>" && after.text == "after"
+            ));
+        }
+
+        #[test]
+        fn media_prompt_leaves_text_only_messages_unmodified() {
+            let messages = vec![Message::user().with_text("just text")];
+
+            let prompt = mlx_media_prompt_with_marker(&messages, "<|image>");
+
+            assert!(prompt.images.is_empty());
+            assert!(prompt.messages.is_none());
+        }
+
+        #[test]
+        fn image_support_requires_loaded_processor_when_media_is_present() {
+            assert!(ensure_mlx_image_support("gemma4", false, false).is_ok());
+            assert!(ensure_mlx_image_support("gemma4", true, true).is_ok());
+
+            let error = ensure_mlx_image_support("gemma4", true, false).unwrap_err();
+            assert!(error.to_string().contains("processor metadata"));
+        }
+
+        #[test]
+        fn processor_inputs_interleave_prompt_text_and_media() {
+            let pixels = vec![255u8, 0, 0];
+            let image = RgbImageView::packed(&pixels, 1, 1).unwrap();
+            let media = [MlxMediaInput::image_rgb8(image)];
+
+            let inputs = mlx_processor_inputs("before<|image>after", "<|image>", &media).unwrap();
+
+            assert!(matches!(
+                &inputs[..],
+                [
+                    ProcessorInput::Text("before"),
+                    ProcessorInput::Media(_),
+                    ProcessorInput::Text("after")
+                ]
+            ));
+        }
+
+        #[test]
+        fn processor_inputs_require_marker_count_to_match_media_count() {
+            let pixels = vec![255u8, 0, 0];
+            let image = RgbImageView::packed(&pixels, 1, 1).unwrap();
+            let media = [MlxMediaInput::image_rgb8(image)];
+
+            let missing = mlx_processor_inputs("no marker", "<|image>", &media).unwrap_err();
+            assert!(missing.to_string().contains("fewer image markers"));
+
+            let extra =
+                mlx_processor_inputs("one<|image>two<|image>", "<|image>", &media).unwrap_err();
+            assert!(extra.to_string().contains("more image markers"));
         }
 
         #[test]

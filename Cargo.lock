@@ -2954,16 +2954,6 @@ dependencies = [
 
 [[package]]
 name = "darling"
-version = "0.21.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9cdf337090841a411e2a7f3deb9187445851f91b309c0c0a29e05f74a00a48c0"
-dependencies = [
- "darling_core 0.21.3",
- "darling_macro 0.21.3",
-]
-
-[[package]]
-name = "darling"
 version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "25ae13da2f202d56bd7f91c25fba009e7717a1e4a1cc98a76d844b65ae912e9d"
@@ -2977,20 +2967,6 @@ name = "darling_core"
 version = "0.20.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0d00b9596d185e565c2207a0b01f8bd1a135483d02d9b7b0a54b11da8d53412e"
-dependencies = [
- "fnv",
- "ident_case",
- "proc-macro2",
- "quote",
- "strsim",
- "syn 2.0.118",
-]
-
-[[package]]
-name = "darling_core"
-version = "0.21.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1247195ecd7e3c85f83c8d2a366e4210d588e802133e1e355180a9870b517ea4"
 dependencies = [
  "fnv",
  "ident_case",
@@ -3020,17 +2996,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc34b93ccb385b40dc71c6fceac4b2ad23662c7eeb248cf10d529b7e055b6ead"
 dependencies = [
  "darling_core 0.20.11",
- "quote",
- "syn 2.0.118",
-]
-
-[[package]]
-name = "darling_macro"
-version = "0.21.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d38308df82d1080de0afee5d069fa14b0326a88c14f15c5ccda35b4a6c414c81"
-dependencies = [
- "darling_core 0.21.3",
  "quote",
  "syn 2.0.118",
 ]
@@ -5136,6 +5101,7 @@ dependencies = [
  "goose-provider-types",
  "goose-sdk-types",
  "hf-hub",
+ "image 0.25.10",
  "include_dir",
  "llama-cpp-2",
  "llama-cpp-sys-2",
@@ -5988,12 +5954,23 @@ dependencies = [
  "byteorder-lite",
  "color_quant",
  "gif 0.14.2",
+ "image-webp",
  "moxcms",
  "num-traits",
  "png 0.18.1",
  "tiff 0.11.3",
  "zune-core",
  "zune-jpeg",
+]
+
+[[package]]
+name = "image-webp"
+version = "0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "525e9ff3e1a4be2fbea1fdf0e98686a6d98b4d8f937e1bf7402245af1909e8c3"
+dependencies = [
+ "byteorder-lite",
+ "quick-error",
 ]
 
 [[package]]
@@ -6173,6 +6150,15 @@ name = "itertools"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2b192c782037fadd9cfa75548310488aabdbf3d2da73885b31bd0abd03351285"
+dependencies = [
+ "either",
+]
+
+[[package]]
+name = "itertools"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8b4baf93f58d4425749ca49a51c50ebab072c5df6994d08fed93541c331481dc"
 dependencies = [
  "either",
 ]
@@ -9343,14 +9329,14 @@ checksum = "3944826ff8fa8093089aba3acb4ef44b9446a99a16f3bf4e74af3f77d340ab7d"
 
 [[package]]
 name = "safemlx"
-version = "0.1.2"
+version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f501c4f9748dfe9ccc905e7e13ae88873d96a00735268c69258e158da07a777f"
+checksum = "ba126836f374feaa7d6842fe4666fa249b364622ba3c1806b493ce0d5461998f"
 dependencies = [
  "bytemuck",
  "dyn-clone",
  "half",
- "itertools 0.14.0",
+ "itertools 0.15.0",
  "libc",
  "mach-sys",
  "num-complex",
@@ -9361,20 +9347,20 @@ dependencies = [
  "safemlx-internal-macros",
  "safemlx-macros",
  "safemlx-sys",
- "safetensors 0.6.2",
+ "safetensors 0.8.0",
  "smallvec",
- "strum 0.27.2",
+ "strum 0.28.0",
  "thiserror 2.0.18",
 ]
 
 [[package]]
 name = "safemlx-internal-macros"
-version = "0.1.0"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9708b1312176963a4ea6412859e6655e56a83fe6ab936142715aa0e9fd662fe5"
+checksum = "6169d5cd6a9b565bc3b0db7d91a9bbfe19999839b23c92e991fd823835d8edbd"
 dependencies = [
- "darling 0.21.3",
- "itertools 0.14.0",
+ "darling 0.23.0",
+ "itertools 0.15.0",
  "proc-macro2",
  "quote",
  "syn 2.0.118",
@@ -9382,43 +9368,44 @@ dependencies = [
 
 [[package]]
 name = "safemlx-lm"
-version = "0.1.5"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "78f450654386009003b745adfdae7af2c7f44ae749d75621a2a0b07607945e9f"
+checksum = "d52d380397b98a382399a0a8754d81c52b2d65d9310c64fb634307396f5a084d"
 dependencies = [
  "anyhow",
  "clap",
  "idna_adapter",
+ "image 0.25.10",
  "minijinja",
  "safemlx",
  "safemlx-lm-utils",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
- "tokenizers 0.22.2",
+ "tokenizers 0.23.1",
 ]
 
 [[package]]
 name = "safemlx-lm-utils"
-version = "0.1.2"
+version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "583d39124dae0b4a93ac7528d16d543f5e717c21365e6b034a8a74d8e1b4eb3a"
+checksum = "1af6547ba76673530921074ad4e7608240526f30335048b7bac077dee5d392a5"
 dependencies = [
  "minijinja",
  "minijinja-contrib",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
- "tokenizers 0.22.2",
+ "tokenizers 0.23.1",
 ]
 
 [[package]]
 name = "safemlx-macros"
-version = "0.1.0"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d549c5fdbe69b904ef84c5cf352add203de1093b3c636e8133d94c24cfc33ce0"
+checksum = "6deae4f49d22783e05805575e4b676e203fcc4e4e6ad57fbb5001abdb405e257"
 dependencies = [
- "darling 0.21.3",
+ "darling 0.23.0",
  "proc-macro2",
  "quote",
  "syn 2.0.118",
@@ -9426,9 +9413,9 @@ dependencies = [
 
 [[package]]
 name = "safemlx-sys"
-version = "0.1.2"
+version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "552285b007dab687890f5c49382e52e69a3bb1359bb2c8f2c2743743509af071"
+checksum = "5240fd4c15ee5c0ff377757f8643e2a555378b4fbd5d0ab1a810efc06f8fcd6c"
 dependencies = [
  "cc",
  "cmake",
@@ -9439,16 +9426,6 @@ name = "safetensors"
 version = "0.4.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "44560c11236a6130a46ce36c836a62936dc81ebf8c36a37947423571be0e55b6"
-dependencies = [
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "safetensors"
-version = "0.6.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "172dd94c5a87b5c79f945c863da53b2ebc7ccef4eca24ac63cca66a41aab2178"
 dependencies = [
  "serde",
  "serde_json",

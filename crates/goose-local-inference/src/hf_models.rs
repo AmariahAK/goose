@@ -1114,6 +1114,42 @@ mod tests {
     }
 
     #[test]
+    fn mlx_processor_support_rejects_qwen_multimodal_without_preprocessor() {
+        let config = Some(serde_json::json!({
+            "model_type": "qwen3_5_moe",
+            "vision_config": {},
+            "image_token_id": 42
+        }));
+
+        let reason = mlx_processor_support(&config, &mlx_siblings(&["tokenizer.json"]));
+
+        assert_eq!(
+            reason.as_deref(),
+            Some("MLX multimodal Qwen models require preprocessor_config.json")
+        );
+    }
+
+    #[test]
+    fn mlx_processor_support_accepts_qwen_multimodal_with_preprocessor() {
+        let config = Some(serde_json::json!({
+            "model_type": "qwen3_5_moe",
+            "vision_config": {},
+            "image_token_id": 42
+        }));
+        let mut siblings = mlx_siblings(&["tokenizer.json"]);
+        siblings.push(sibling("preprocessor_config.json"));
+
+        assert!(mlx_processor_support(&config, &siblings).is_none());
+    }
+
+    #[test]
+    fn mlx_processor_support_ignores_text_only_models() {
+        let config = Some(serde_json::json!({ "model_type": "llama" }));
+
+        assert!(mlx_processor_support(&config, &mlx_siblings(&["tokenizer.json"])).is_none());
+    }
+
+    #[test]
     fn mlx_download_filenames_include_fp8_snapshot_metadata() {
         let siblings = [
             "config.json",
@@ -1743,17 +1779,17 @@ fn mlx_variants_from_model_info(
         size_bytes,
         filename: None,
         download_url: None,
-        description: mlx_variant_description(mlx_config),
+        description: mlx_variant_description(mlx_config, siblings),
         quality_rank: 91,
         sharded: siblings
             .iter()
             .filter(|s| s.rfilename.ends_with(".safetensors"))
             .count()
             > 1,
-        supported: is_mlx_runtime_supported(mlx_config)
+        supported: is_mlx_runtime_supported(mlx_config, siblings)
             && cfg!(target_os = "macos")
             && cfg!(feature = "mlx"),
-        unsupported_reason: mlx_unsupported_reason(mlx_config),
+        unsupported_reason: mlx_unsupported_reason(mlx_config, siblings),
     }]
 }
 
@@ -1824,11 +1860,14 @@ fn mlx_model_type(config: &Option<serde_json::Value>) -> Option<&str> {
         .and_then(|value| value.as_str())
 }
 
-fn is_mlx_runtime_supported(config: &Option<serde_json::Value>) -> bool {
-    mlx_config_support(config).is_none()
+fn is_mlx_runtime_supported(config: &Option<serde_json::Value>, siblings: &[RepoSibling]) -> bool {
+    mlx_config_support(config).is_none() && mlx_processor_support(config, siblings).is_none()
 }
 
-fn mlx_unsupported_reason(config: &Option<serde_json::Value>) -> Option<String> {
+fn mlx_unsupported_reason(
+    config: &Option<serde_json::Value>,
+    siblings: &[RepoSibling],
+) -> Option<String> {
     if !cfg!(target_os = "macos") {
         return Some("MLX requires macOS".to_string());
     }
@@ -1836,12 +1875,51 @@ fn mlx_unsupported_reason(config: &Option<serde_json::Value>) -> Option<String> 
         return Some("MLX support was not compiled in".to_string());
     }
 
-    mlx_config_support(config)
+    mlx_config_support(config).or_else(|| mlx_processor_support(config, siblings))
 }
 
 fn mlx_config_support(config: &Option<serde_json::Value>) -> Option<String> {
     let config = config.as_ref()?;
     mlx_config_support_for_value(config)
+}
+
+fn mlx_processor_support(
+    config: &Option<serde_json::Value>,
+    siblings: &[RepoSibling],
+) -> Option<String> {
+    let config = config.as_ref()?;
+    if !is_qwen_mlx_multimodal_config(config) {
+        return None;
+    }
+    if siblings
+        .iter()
+        .any(|s| s.rfilename == "preprocessor_config.json")
+    {
+        None
+    } else {
+        Some("MLX multimodal Qwen models require preprocessor_config.json".to_string())
+    }
+}
+
+fn is_qwen_mlx_multimodal_config(config: &serde_json::Value) -> bool {
+    let effective_type = config
+        .get("text_config")
+        .and_then(|value| value.get("model_type"))
+        .and_then(|value| value.as_str())
+        .or_else(|| config.get("model_type").and_then(|value| value.as_str()));
+    if !matches!(effective_type, Some("qwen3_5_moe" | "qwen3_5_moe_text")) {
+        return false;
+    }
+
+    config_has_key(config, "vision_config")
+        || config_has_key(config, "image_token_id")
+        || config
+            .get("text_config")
+            .is_some_and(|text_config| config_has_key(text_config, "image_token_id"))
+}
+
+fn config_has_key(config: &serde_json::Value, key: &str) -> bool {
+    config.get(key).is_some_and(|value| !value.is_null())
 }
 
 #[cfg(feature = "mlx")]
@@ -1856,8 +1934,8 @@ fn mlx_config_support_for_value(_config: &serde_json::Value) -> Option<String> {
     None
 }
 
-fn mlx_variant_description(config: &Option<serde_json::Value>) -> String {
-    match mlx_unsupported_reason(config) {
+fn mlx_variant_description(config: &Option<serde_json::Value>, siblings: &[RepoSibling]) -> String {
+    match mlx_unsupported_reason(config, siblings) {
         None => "MLX safetensors snapshot".to_string(),
         Some(reason) => format!("MLX safetensors snapshot ({reason})"),
     }
