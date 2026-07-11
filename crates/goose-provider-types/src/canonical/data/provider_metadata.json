@@ -19,7 +19,7 @@
     "env": [
       "ABACUS_API_KEY"
     ],
-    "model_count": 65
+    "model_count": 95
   },
   {
     "id": "abliteration-ai",
@@ -321,6 +321,17 @@
     "model_count": 3
   },
   {
+    "id": "empiriolabs",
+    "display_name": "EmpirioLabs AI",
+    "npm": "@ai-sdk/openai-compatible",
+    "api": "https://api.empiriolabs.ai/v1",
+    "doc": "https://docs.empiriolabs.ai",
+    "env": [
+      "EMPIRIOLABS_API_KEY"
+    ],
+    "model_count": 34
+  },
+  {
     "id": "evroc",
     "display_name": "evroc",
     "npm": "@ai-sdk/openai-compatible",
@@ -395,7 +406,7 @@
     "env": [
       "GITHUB_TOKEN"
     ],
-    "model_count": 25
+    "model_count": 28
   },
   {
     "id": "github-models",
@@ -582,7 +593,7 @@
     "env": [
       "LLMGATEWAY_API_KEY"
     ],
-    "model_count": 181
+    "model_count": 184
   },
   {
     "id": "llmtr",
@@ -726,6 +737,17 @@
       "MOARK_API_KEY"
     ],
     "model_count": 2
+  },
+  {
+    "id": "model-oracle-ai",
+    "display_name": "Model Oracle AI",
+    "npm": "@ai-sdk/openai-compatible",
+    "api": "https://api.modeloracle.com/api/v1",
+    "doc": "https://modeloracle.com/setup/",
+    "env": [
+      "MODEL_ORACLE_API_KEY"
+    ],
+    "model_count": 15
   },
   {
     "id": "modelscope",
@@ -880,7 +902,7 @@
     "env": [
       "OPENCODE_API_KEY"
     ],
-    "model_count": 76
+    "model_count": 79
   },
   {
     "id": "opencode-go",
@@ -927,6 +949,17 @@
     "model_count": 18
   },
   {
+    "id": "pioneer",
+    "display_name": "Pioneer",
+    "npm": "@ai-sdk/openai-compatible",
+    "api": "https://api.pioneer.ai/v1",
+    "doc": "https://agent.pioneer.ai/llms.txt",
+    "env": [
+      "PIONEER_API_KEY"
+    ],
+    "model_count": 76
+  },
+  {
     "id": "poe",
     "display_name": "Poe",
     "npm": "@ai-sdk/openai-compatible",
@@ -946,7 +979,7 @@
     "env": [
       "POOLSIDE_API_KEY"
     ],
-    "model_count": 2
+    "model_count": 3
   },
   {
     "id": "privatemode-ai",
@@ -1013,7 +1046,7 @@
     "env": [
       "ROUTING_RUN_API_KEY"
     ],
-    "model_count": 12
+    "model_count": 15
   },
   {
     "id": "sakana",
@@ -1235,6 +1268,17 @@
       "UMANS_AI_CODING_PLAN_API_KEY"
     ],
     "model_count": 6
+  },
+  {
+    "id": "unorouter",
+    "display_name": "UnoRouter",
+    "npm": "@ai-sdk/openai-compatible",
+    "api": "https://api.unorouter.com/v1",
+    "doc": "https://unorouter.com/models",
+    "env": [
+      "UNOROUTER_API_KEY"
+    ],
+    "model_count": 23
   },
   {
     "id": "upstage",
