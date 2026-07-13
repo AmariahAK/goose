@@ -202,17 +202,6 @@ impl PromptInjectionScanner {
             let scan = classifier.classify_chunked(text).await;
             let threshold = self.get_threshold_from_config();
 
-            let detected = scan.succeeded > 0 && scan.max_confidence >= threshold;
-
-            if detected {
-                return Ok(DetailedScanResult {
-                    confidence: scan.max_confidence,
-                    pattern_matches: Vec::new(),
-                    ml_confidence: Some(scan.max_confidence),
-                    used_pattern_detection: false,
-                });
-            }
-
             if scan.has_unscanned_tail() {
                 tracing::warn!(
                     monotonic_counter.goose.command_classifier_oversized_flagged = 1,
@@ -226,6 +215,17 @@ impl PromptInjectionScanner {
                     confidence: 1.0,
                     pattern_matches: Vec::new(),
                     ml_confidence: Some(1.0),
+                    used_pattern_detection: false,
+                });
+            }
+
+            let detected = scan.succeeded > 0 && scan.max_confidence >= threshold;
+
+            if detected {
+                return Ok(DetailedScanResult {
+                    confidence: scan.max_confidence,
+                    pattern_matches: Vec::new(),
+                    ml_confidence: Some(scan.max_confidence),
                     used_pattern_detection: false,
                 });
             }
