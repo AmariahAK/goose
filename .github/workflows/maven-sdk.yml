@@ -105,7 +105,7 @@ jobs:
 
       - name: Restore downloaded native libraries
         shell: bash
-        run: cp -R native-artifacts/maven-native/* crates/goose-sdk/maven/src/main/resources/
+        run: cp -R native-artifacts/* crates/goose-sdk/maven/src/main/resources/
 
       - name: Build Maven publication
         working-directory: crates/goose-sdk/maven
@@ -164,7 +164,7 @@ jobs:
 
       - name: Restore downloaded native libraries
         shell: bash
-        run: cp -R native-artifacts/maven-native/* crates/goose-sdk/maven/src/main/resources/
+        run: cp -R native-artifacts/* crates/goose-sdk/maven/src/main/resources/
 
       - name: Publish to Maven Central
         working-directory: crates/goose-sdk/maven
