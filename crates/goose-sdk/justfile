@@ -37,18 +37,8 @@ python: (_generate "python")
     DYLD_LIBRARY_PATH={{debug_lib_dir}} LD_LIBRARY_PATH={{debug_lib_dir}} \
         python3 {{examples_dir}}/provider.py
 
-kotlin: (_generate "kotlin")
-    @if [ ! -f {{examples_dir}}/jna.jar ]; then \
-        curl -sSL -o {{examples_dir}}/jna.jar \
-            https://repo1.maven.org/maven2/net/java/dev/jna/jna/5.14.0/jna-5.14.0.jar; \
-    fi
-    kotlinc -cp {{examples_dir}}/jna.jar -nowarn \
-        {{gen_dir}}/io/github/aaif_goose/goose.kt \
-        {{examples_dir}}/Provider.kt \
-        -include-runtime -d {{examples_dir}}/provider.jar 2>/dev/null
-    java -Djna.library.path={{debug_lib_dir}} \
-        --enable-native-access=ALL-UNNAMED \
-        -cp {{examples_dir}}/provider.jar:{{examples_dir}}/jna.jar aaif.example.ProviderKt
+kotlin: maven-package
+    cd {{examples_dir}}/kotlin && gradle --no-daemon run
 
 python-bindings profile="debug":
     @case "{{profile}}" in \

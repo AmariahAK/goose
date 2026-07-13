@@ -10,7 +10,7 @@ completions.
 
 ```bash
 just python   # build bindings + run examples/uniffi/provider.py
-just kotlin   # build bindings + run examples/uniffi/Provider.kt
+just kotlin   # build the Maven artifact + run examples/uniffi/kotlin
 ```
 
 ## Python package
