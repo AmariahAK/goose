@@ -29,6 +29,7 @@ import { useAutoSubmit } from '../hooks/useAutoSubmit';
 import { Goose } from './icons';
 import EnvironmentBadge from './GooseSidebar/EnvironmentBadge';
 import SessionActionsHeader from './SessionActionsHeader';
+import { isAcpRecovering, subscribeToAcpRecovery } from '../acp/acpConnection';
 
 const i18n = defineMessages({
   failedToLoadSession: {
@@ -38,6 +39,10 @@ const i18n = defineMessages({
   goHome: {
     id: 'baseChat.goHome',
     defaultMessage: 'Go home',
+  },
+  reconnecting: {
+    id: 'baseChat.reconnecting',
+    defaultMessage: 'Connection lost. Reconnecting…',
   },
 });
 
@@ -75,6 +80,7 @@ export default function BaseChat({
   const [hasStartedUsingRecipe, setHasStartedUsingRecipe] = React.useState(false);
   const [hasNotAcceptedRecipe, setHasNotAcceptedRecipe] = useState<boolean>();
   const [hasRecipeSecurityWarnings, setHasRecipeSecurityWarnings] = useState(false);
+  const [acpRecovering, setAcpRecovering] = useState(isAcpRecovering);
   const isMobile = useIsMobile();
   const navContext = useNavigationContextSafe();
   const setView = useNavigation();
@@ -82,6 +88,8 @@ export default function BaseChat({
   const contentClassName = cn('pr-1 pb-10 pt-12', (isMobile || isNavCollapsed) && 'pt-16');
   const { droppedFiles, setDroppedFiles, handleDrop, handleDragOver } = useFileDrop();
   const onStreamFinish = useCallback(() => {}, []);
+
+  useEffect(() => subscribeToAcpRecovery(setAcpRecovering), []);
 
   const {
     session,
@@ -470,6 +478,12 @@ export default function BaseChat({
           )}
         </div>
 
+        {acpRecovering && (
+          <div role="status" className="mx-4 mb-2 text-sm text-text-secondary">
+            {intl.formatMessage(i18n.reconnecting)}
+          </div>
+        )}
+
         <ChatInputCard
           className={cn(
             'relative z-10 mx-4 mb-4',
@@ -484,7 +498,7 @@ export default function BaseChat({
             onStop={stopStreaming}
             onSteerQueuedMessage={onSteerQueuedMessage}
             pauseQueueOnStop={pauseQueueOnStop}
-            queueProcessingBlocked={queueProcessingBlocked}
+            queueProcessingBlocked={queueProcessingBlocked || acpRecovering}
             commandHistory={commandHistory}
             initialValue={initialPrompt}
             setView={setView}
