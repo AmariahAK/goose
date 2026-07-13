@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { GOOSE_SERVE_EXITED_USER_MESSAGE } from '../../gooseServeLeaseRegistry';
 
 const sdk = vi.hoisted(() => {
   const initialize = vi.fn();
@@ -109,6 +110,30 @@ describe('ACP connection ownership', () => {
     await reconnected;
 
     expect(sdk.instances).toHaveLength(3);
+  });
+
+  it('stops reconnecting when the Goose backend has exited', async () => {
+    const { getAcpClient, subscribeToAcpRecovery } = await import('../acpConnection');
+    const listener = vi.fn();
+    subscribeToAcpRecovery(listener);
+    await getAcpClient();
+
+    const getAcpUrl = vi
+      .fn()
+      .mockRejectedValue(
+        new Error(`Error invoking remote method 'get-acp-url': ${GOOSE_SERVE_EXITED_USER_MESSAGE}`)
+      );
+    window.electron.getAcpUrl = getAcpUrl;
+    sdk.instances[0].resolveClosed();
+    await Promise.resolve();
+
+    const connection = expect(getAcpClient()).rejects.toThrow(GOOSE_SERVE_EXITED_USER_MESSAGE);
+    await vi.advanceTimersByTimeAsync(250);
+    await connection;
+
+    expect(listener.mock.calls).toEqual([[true], [false]]);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(getAcpUrl).toHaveBeenCalledOnce();
   });
 
   it('reconnects immediately after system resume', async () => {

@@ -5,6 +5,7 @@ import {
 } from '@aaif/goose-sdk';
 import { PROTOCOL_VERSION, type InitializeResponse } from '@agentclientprotocol/sdk';
 import packageJson from '../../package.json';
+import { GOOSE_SERVE_EXITED_USER_MESSAGE } from '../gooseServeLeaseRegistry';
 import {
   handleAcpGooseSessionNotification,
   handleAcpSessionNotification,
@@ -81,7 +82,7 @@ function recoverConnection(immediate: boolean): void {
   const generation = connectionGeneration;
   const recoveryAttempt = immediate
     ? openConnection(generation).catch((error) => {
-        if (generation !== connectionGeneration) {
+        if (generation !== connectionGeneration || isGooseServeExitedError(error)) {
           throw error;
         }
         return retryWithBackoff(generation);
@@ -94,7 +95,11 @@ function recoverConnection(immediate: boolean): void {
         setRecovering(false);
       }
     },
-    () => undefined
+    () => {
+      if (generation === connectionGeneration) {
+        setRecovering(false);
+      }
+    }
   );
 }
 
@@ -187,13 +192,17 @@ async function retryWithBackoff(generation: number): Promise<AcpConnection> {
     try {
       return await openConnection(generation);
     } catch (error) {
-      if (generation !== connectionGeneration) {
+      if (generation !== connectionGeneration || isGooseServeExitedError(error)) {
         throw error;
       }
     }
   }
 
   throw new Error('ACP connection attempt is no longer current');
+}
+
+function isGooseServeExitedError(error: unknown): boolean {
+  return error instanceof Error && error.message.includes(GOOSE_SERVE_EXITED_USER_MESSAGE);
 }
 
 function delay(delayMs: number): Promise<void> {
