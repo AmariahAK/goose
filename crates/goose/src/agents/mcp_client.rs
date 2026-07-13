@@ -703,13 +703,6 @@ async fn send_cancel_message(
     .await
 }
 
-/// Remove keys whose values are empty strings or the literal placeholder
-/// "OMIT" — LLMs often emit these for optional parameters they have no
-/// value for, and MCP servers reject them instead of treating them as absent.
-fn strip_empty_params(args: &mut JsonObject) {
-    args.retain(|_, v| !matches!(v, Value::String(s) if s.is_empty() || s == "OMIT"));
-}
-
 #[async_trait::async_trait]
 impl McpClientTrait for McpClient {
     fn get_info(&self) -> Option<&InitializeResult> {
@@ -796,8 +789,7 @@ impl McpClientTrait for McpClient {
         cancel_token: CancellationToken,
     ) -> Result<CallToolResult, Error> {
         let mut params = CallToolRequestParams::new(name.to_string());
-        if let Some(mut args) = arguments {
-            strip_empty_params(&mut args);
+        if let Some(args) = arguments {
             if !args.is_empty() {
                 params = params.with_arguments(args);
             }

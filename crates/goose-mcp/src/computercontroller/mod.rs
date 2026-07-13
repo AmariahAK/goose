@@ -1335,13 +1335,7 @@ impl ComputerControllerServer {
                         None,
                     )
                 })?;
-                let value = params.value.as_ref().ok_or_else(|| {
-                    ErrorData::new(
-                        ErrorCode::INVALID_PARAMS,
-                        "Missing 'value' parameter".to_string(),
-                        None,
-                    )
-                })?;
+                let value = params.value.as_deref().unwrap_or("");
 
                 let worksheet_name = params.worksheet.as_deref().unwrap_or("Sheet1");
 

@@ -49,8 +49,8 @@ use crate::oauth::{oauth_flow, GooseCredentialStore};
 use crate::prompt_template;
 use crate::subprocess::configure_subprocess;
 use rmcp::model::{
-    CallToolRequestParams, CallToolResult, Content, ErrorCode, ErrorData, GetPromptResult, Meta,
-    Prompt, Resource, ResourceContents, ServerInfo, Tool,
+    CallToolRequestParams, CallToolResult, Content, ErrorCode, ErrorData, GetPromptResult,
+    JsonObject, Meta, Prompt, Resource, ResourceContents, ServerInfo, Tool,
 };
 use rmcp::transport::auth::{AuthClient, CredentialStore};
 use schemars::_private::NoSerialize;
@@ -400,6 +400,7 @@ struct ResolvedTool {
     client: McpClientBox,
     tool_meta: Option<Value>,
     resource_uri: Option<String>,
+    input_schema: Option<Arc<JsonObject>>,
 }
 
 async fn child_process_client(
@@ -1737,6 +1738,7 @@ impl ExtensionManager {
                     client,
                     tool_meta: get_tool_meta_value(tool),
                     resource_uri: get_tool_resource_uri(tool),
+                    input_schema: Some(tool.input_schema.clone()),
                 });
             }
 
@@ -1750,6 +1752,7 @@ impl ExtensionManager {
                         client,
                         tool_meta: None,
                         resource_uri: None,
+                        input_schema: None,
                     });
                 }
             }
@@ -1783,6 +1786,36 @@ impl ExtensionManager {
         ))
     }
 
+    /// Strip arguments whose values are empty strings or "OMIT", but only for
+    /// parameters that the tool schema declares as optional (not in `required`).
+    /// Required parameters with empty strings are preserved — the LLM
+    /// intentionally passed them.
+    fn strip_empty_optional_params(
+        args: Option<JsonObject>,
+        input_schema: Option<&Arc<JsonObject>>,
+    ) -> Option<JsonObject> {
+        let mut args = args?;
+        let required: Vec<&str> = input_schema
+            .and_then(|schema| schema.get("required"))
+            .and_then(|r| r.as_array())
+            .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
+            .unwrap_or_default();
+
+        args.retain(|key, v| {
+            if !matches!(v, Value::String(s) if s.is_empty() || s == "OMIT") {
+                return true;
+            }
+            // Keep if this key is required; strip if optional
+            required.contains(&key.as_str())
+        });
+
+        if args.is_empty() {
+            None
+        } else {
+            Some(args)
+        }
+    }
+
     pub async fn dispatch_tool_call(
         &self,
         ctx: &super::tool_execution::ToolCallContext,
@@ -1809,7 +1842,10 @@ impl ExtensionManager {
             }
         }
 
-        let arguments = tool_call.arguments.clone();
+        let arguments = Self::strip_empty_optional_params(
+            tool_call.arguments.clone(),
+            resolved.input_schema.as_ref(),
+        );
         let client = resolved.client.clone();
         let hydration_client = client.clone();
         let notifications_receiver = client.subscribe().await;
