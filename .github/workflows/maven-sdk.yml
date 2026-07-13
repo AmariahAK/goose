@@ -1,6 +1,9 @@
 name: Maven SDK
 
 on:
+  push:
+    branches:
+      - maven-build-test-action
   workflow_dispatch:
     inputs:
       publish:
