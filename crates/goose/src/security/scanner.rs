@@ -202,6 +202,34 @@ impl PromptInjectionScanner {
             let scan = classifier.classify_chunked(text).await;
             let threshold = self.get_threshold_from_config();
 
+            let detected = scan.succeeded > 0 && scan.max_confidence >= threshold;
+
+            if detected {
+                return Ok(DetailedScanResult {
+                    confidence: scan.max_confidence,
+                    pattern_matches: Vec::new(),
+                    ml_confidence: Some(scan.max_confidence),
+                    used_pattern_detection: false,
+                });
+            }
+
+            if scan.has_unscanned_tail() {
+                tracing::warn!(
+                    monotonic_counter.goose.command_classifier_oversized_flagged = 1,
+                    security.event_type = "command_classifier_chunking",
+                    security.threat_type = "command_injection",
+                    security.confidence = 1.0,
+                    scanner.unscanned_windows = scan.unscanned,
+                    "command too large to fully classify; flagging as suspicious rather than trusting a partial scan"
+                );
+                return Ok(DetailedScanResult {
+                    confidence: 1.0,
+                    pattern_matches: Vec::new(),
+                    ml_confidence: Some(1.0),
+                    used_pattern_detection: false,
+                });
+            }
+
             if chunked_scan_is_trustworthy(&scan, threshold) {
                 return Ok(DetailedScanResult {
                     confidence: scan.max_confidence,
@@ -393,7 +421,8 @@ impl PromptInjectionScanner {
 
 fn chunked_scan_is_trustworthy(scan: &ChunkedScan, threshold: f32) -> bool {
     let detected = scan.succeeded > 0 && scan.max_confidence >= threshold;
-    let clean_and_complete = !scan.had_failures() && !scan.all_failed();
+    let clean_and_complete =
+        !scan.had_failures() && !scan.has_unscanned_tail() && !scan.all_failed();
     detected || clean_and_complete
 }
 
@@ -417,6 +446,7 @@ mod tests {
             max_confidence: 0.99,
             succeeded: 2,
             failed: 1,
+            unscanned: 0,
         };
         assert!(chunked_scan_is_trustworthy(&scan, 0.8));
     }
@@ -427,6 +457,7 @@ mod tests {
             max_confidence: 0.1,
             succeeded: 2,
             failed: 1,
+            unscanned: 0,
         };
         assert!(!chunked_scan_is_trustworthy(&scan, 0.8));
     }
@@ -437,6 +468,7 @@ mod tests {
             max_confidence: 0.1,
             succeeded: 3,
             failed: 0,
+            unscanned: 0,
         };
         assert!(chunked_scan_is_trustworthy(&scan, 0.8));
     }
@@ -447,7 +479,20 @@ mod tests {
             max_confidence: 0.0,
             succeeded: 0,
             failed: 3,
+            unscanned: 0,
         };
+        assert!(!chunked_scan_is_trustworthy(&scan, 0.8));
+    }
+
+    #[test]
+    fn unscanned_tail_is_reported() {
+        let scan = ChunkedScan {
+            max_confidence: 0.0,
+            succeeded: 12,
+            failed: 0,
+            unscanned: 5,
+        };
+        assert!(scan.has_unscanned_tail());
         assert!(!chunked_scan_is_trustworthy(&scan, 0.8));
     }
     use rmcp::object;

@@ -10,6 +10,7 @@ pub struct ChunkedScan {
     pub max_confidence: f32,
     pub succeeded: usize,
     pub failed: usize,
+    pub unscanned: usize,
 }
 
 impl ChunkedScan {
@@ -19,6 +20,10 @@ impl ChunkedScan {
 
     pub fn all_failed(&self) -> bool {
         self.succeeded == 0
+    }
+
+    pub fn has_unscanned_tail(&self) -> bool {
+        self.unscanned > 0
     }
 }
 
@@ -265,6 +270,7 @@ impl ClassificationClient {
                     max_confidence: conf,
                     succeeded: 1,
                     failed: 0,
+                    unscanned: 0,
                 },
                 Err(e) => {
                     tracing::warn!(
@@ -277,6 +283,7 @@ impl ClassificationClient {
                         max_confidence: 0.0,
                         succeeded: 0,
                         failed: 1,
+                        unscanned: 0,
                     }
                 }
             };
@@ -314,9 +321,9 @@ impl ClassificationClient {
                 }
             }
         }
-        let failed = (total - succeeded) + unscanned;
+        let failed = total - succeeded;
 
-        if failed > 0 {
+        if failed > 0 || unscanned > 0 {
             tracing::warn!(
                 monotonic_counter.goose.command_classifier_chunk_failure = 1,
                 security.event_type = "command_classifier_chunking",
@@ -339,6 +346,7 @@ impl ClassificationClient {
             max_confidence,
             succeeded,
             failed,
+            unscanned,
         }
     }
 
@@ -397,10 +405,10 @@ mod tests {
         let scan = client.classify_chunked(&huge).await;
 
         assert!(
-            scan.had_failures(),
-            "an oversized command must be reported as incomplete, not a clean pass"
+            scan.has_unscanned_tail(),
+            "an oversized command must report an unscanned tail, not a clean pass"
         );
-        assert!(scan.failed >= 1);
+        assert!(scan.unscanned >= 1);
     }
 
     #[tokio::test]
