@@ -141,6 +141,7 @@ export default function BaseChat({
   // such as forks or resumes should auto-submit normally.
   const suppressInitialAutoSubmit = noAutoSubmit && messages.length === 0;
   const canAutoSubmit =
+    !acpRecovering &&
     !suppressInitialAutoSubmit &&
     (session?.session_type === 'scheduled' || !recipe || hasNotAcceptedRecipe === false);
 
